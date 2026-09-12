@@ -10,6 +10,19 @@ export function inferEventDate(messageText: string, sentAt: string): string | nu
   return parsed ? parsed.toISOString() : null;
 }
 
+function normalizeConfidence(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) return Math.min(1, Math.max(0, value));
+  if (typeof value === "string") {
+    const numericPart = Number(value.trim().replace("%", ""));
+    if (Number.isFinite(numericPart)) {
+      const decimal = value.includes("%") || numericPart > 1 ? numericPart / 100 : numericPart;
+      return Math.min(1, Math.max(0, decimal));
+    }
+  }
+  // Preserve the source with a conservative default when the model omits this field.
+  return 0.5;
+}
+
 function inferTimedTask(messageText: string): string | null {
   const match = messageText.match(
     /(?:please\s+)?(close|lock|turn off|collect|pick up|take|call|remember to)\s+(.+?)(?=\s+(?:by|at|before|on|today|tomorrow)\b|[,.]|$)/i,
@@ -38,10 +51,7 @@ function normalizeExtraction(payload: unknown, source: SourceMessage): unknown {
   const fallbackTask = !modelEvent && inferredDate ? inferTimedTask(source.messageText) : null;
   const event = modelEvent ?? (fallbackTask ? { title: fallbackTask, occurredAt: inferredDate } : null);
   const importance = typeof candidate.importance === "string" ? candidate.importance.toLowerCase() : candidate.importance;
-  const confidence =
-    typeof candidate.confidence === "string" && candidate.confidence.trim() !== ""
-      ? Number(candidate.confidence)
-      : candidate.confidence;
+  const confidence = normalizeConfidence(candidate.confidence);
 
   return {
     ...candidate,

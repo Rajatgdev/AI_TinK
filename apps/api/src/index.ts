@@ -31,6 +31,24 @@ await pool.query(`
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )
 `);
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS reminders (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    memory_id UUID NOT NULL UNIQUE REFERENCES memories(id) ON DELETE CASCADE,
+    chat_id TEXT NOT NULL,
+    last_notified_at TIMESTAMPTZ,
+    acknowledged_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )
+`);
+await pool.query(`
+  INSERT INTO reminders (memory_id, chat_id)
+  SELECT m.id, s.chat_id
+    FROM memories m
+    JOIN source_messages s ON s.id = m.source_message_id
+   WHERE m.deleted_at IS NULL AND m.occurred_at IS NOT NULL
+  ON CONFLICT (memory_id) DO NOTHING
+`);
 
 function tokensMatch(a: string, b: string): boolean {
   const aBuffer = Buffer.from(a);
@@ -150,6 +168,45 @@ app.get<{ Params: { chatId: string } }>("/capture-status/:chatId", { preHandler:
   return { paused: result.rows[0]?.is_paused ?? false };
 });
 
+app.get<{ Querystring: { leadMinutes?: string; repeatMinutes?: string } }>("/reminders/due", { preHandler: requireAccess }, async (request) => {
+  const leadMinutes = Math.min(Math.max(Number(request.query.leadMinutes ?? 1440), 1), 10080);
+  const repeatMinutes = Math.min(Math.max(Number(request.query.repeatMinutes ?? 30), 1), 1440);
+  const result = await pool.query(
+    `SELECT r.id, r.chat_id, m.id AS memory_id, m.summary, m.event_title, m.occurred_at,
+            s.message_id
+       FROM reminders r
+       JOIN memories m ON m.id = r.memory_id
+       JOIN source_messages s ON s.id = m.source_message_id
+      WHERE r.acknowledged_at IS NULL
+        AND m.deleted_at IS NULL
+        AND m.occurred_at <= now() + ($1::text || ' minutes')::interval
+        AND m.occurred_at >= now() - INTERVAL '12 hours'
+        AND (r.last_notified_at IS NULL OR r.last_notified_at <= now() - ($2::text || ' minutes')::interval)
+      ORDER BY m.occurred_at ASC
+      LIMIT 10`,
+    [leadMinutes, repeatMinutes],
+  );
+  return { reminders: result.rows };
+});
+
+app.post<{ Params: { id: string } }>("/reminders/:id/notified", { preHandler: requireAccess }, async (request, reply) => {
+  const result = await pool.query(
+    "UPDATE reminders SET last_notified_at = now() WHERE id = $1 AND acknowledged_at IS NULL RETURNING id",
+    [request.params.id],
+  );
+  if (result.rowCount === 0) return reply.code(404).send({ error: "Reminder not found" });
+  return { notified: true };
+});
+
+app.post<{ Params: { id: string } }>("/reminders/:id/acknowledge", { preHandler: requireAccess }, async (request, reply) => {
+  const result = await pool.query(
+    "UPDATE reminders SET acknowledged_at = now() WHERE id = $1 AND acknowledged_at IS NULL RETURNING id",
+    [request.params.id],
+  );
+  if (result.rowCount === 0) return reply.code(404).send({ error: "Reminder not found or already completed" });
+  return { acknowledged: true };
+});
+
 app.post<{ Params: { chatId: string } }>("/controls/:chatId/pause", { preHandler: requireAccess }, async (request) => {
   await pool.query(
     `INSERT INTO capture_controls (chat_id, is_paused)
@@ -209,10 +266,11 @@ app.post("/ingest/sources", { preHandler: requireAccess }, async (request, reply
   if (sourceId && extractionIsConfigured()) {
     try {
       const memory = await extractMemory(source);
-      await pool.query(
+      const memoryInsert = await pool.query<{ id: string }>(
         `INSERT INTO memories
           (source_message_id, summary, people, event_title, occurred_at, importance, confidence)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING id`,
         [
           sourceId,
           memory.summary,
@@ -223,6 +281,12 @@ app.post("/ingest/sources", { preHandler: requireAccess }, async (request, reply
           memory.confidence,
         ],
       );
+      if (memory.event?.occurredAt && memoryInsert.rows[0]) {
+        await pool.query(
+          "INSERT INTO reminders (memory_id, chat_id) VALUES ($1, $2) ON CONFLICT (memory_id) DO NOTHING",
+          [memoryInsert.rows[0].id, source.chatId],
+        );
+      }
       extractionStatus = "created";
     } catch (error) {
       extractionStatus = "failed";

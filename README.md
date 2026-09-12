@@ -48,6 +48,10 @@ Use `/briefing` in the bot to test a concise, source-backed daily briefing.
 Set `DAILY_BRIEFING_CRON` only after manual verification; for example,
 `0 9 * * *` sends at 9:00 AM in `DAILY_BRIEFING_TIMEZONE`.
 
+For explicit future events, the bot also sends active reminders. It begins
+within `REMINDER_LEAD_MINUTES`, repeats every `REMINDER_REPEAT_MINUTES`, and
+stops when a configured caregiver selects **Mark done**.
+
 ## Local caregiver dashboard
 
 Set `VITE_SELECTED_CHAT_ID` to the selected test group ID, then run

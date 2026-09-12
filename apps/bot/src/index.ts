@@ -45,6 +45,16 @@ type BriefingMemory = {
   message_id: number;
 };
 
+type DueReminder = {
+  id: string;
+  chat_id: string;
+  memory_id: string;
+  summary: string;
+  event_title: string;
+  occurred_at: string;
+  message_id: number;
+};
+
 type Source = {
   sender_name: string | null;
   message_text: string;
@@ -68,6 +78,18 @@ async function getBriefing(): Promise<BriefingMemory[]> {
   const response = await fetch(`${apiBaseUrl}/briefing`, { headers: internalApiToken ? { authorization: `Bearer ${internalApiToken}` } : {} });
   if (!response.ok) throw new Error("Briefing API request failed.");
   return ((await response.json()) as { memories: BriefingMemory[] }).memories;
+}
+
+async function getDueReminders(): Promise<DueReminder[]> {
+  const leadMinutes = process.env.REMINDER_LEAD_MINUTES ?? "1440";
+  const repeatMinutes = process.env.REMINDER_REPEAT_MINUTES ?? "30";
+  const response = await fetch(`${apiBaseUrl}/reminders/due?leadMinutes=${leadMinutes}&repeatMinutes=${repeatMinutes}`, { headers: internalApiToken ? { authorization: `Bearer ${internalApiToken}` } : {} });
+  if (!response.ok) throw new Error("Due reminders API request failed.");
+  return ((await response.json()) as { reminders: DueReminder[] }).reminders;
+}
+
+async function markReminderNotified(id: string): Promise<void> {
+  await fetch(`${apiBaseUrl}/reminders/${id}/notified`, { method: "POST", headers: internalApiToken ? { authorization: `Bearer ${internalApiToken}` } : {} });
 }
 
 function briefingText(memories: BriefingMemory[]): string {
@@ -167,6 +189,17 @@ bot.action(/^delete:([0-9a-f-]{36})$/, async (ctx) => {
   await ctx.reply(response.ok ? "Memory deleted. Its original source is retained for audit." : "That memory could not be deleted.");
 });
 
+bot.action(/^reminder-done:([0-9a-f-]{36})$/, async (ctx) => {
+  await ctx.answerCbQuery();
+  if (!isCaregiver(ctx.from?.id)) {
+    await ctx.reply("Only the configured caregiver can mark a reminder done.");
+    return;
+  }
+  const [, reminderId] = ctx.match;
+  const response = await fetch(`${apiBaseUrl}/reminders/${reminderId}/acknowledge`, { method: "POST", headers: internalApiToken ? { authorization: `Bearer ${internalApiToken}` } : {} });
+  await ctx.reply(response.ok ? "Reminder marked done. I will stop repeating it." : "That reminder could not be marked done.");
+});
+
 const briefingCron = process.env.DAILY_BRIEFING_CRON;
 if (briefingCron) {
   const timezone = process.env.DAILY_BRIEFING_TIMEZONE ?? "UTC";
@@ -187,6 +220,29 @@ if (briefingCron) {
   );
   console.log(`Daily briefing scheduled with ${briefingCron} in ${timezone}.`);
 }
+
+const reminderCron = process.env.REMINDER_CHECK_CRON ?? "* * * * *";
+if (!cron.validate(reminderCron)) throw new Error("REMINDER_CHECK_CRON is not a valid five-field cron expression.");
+cron.schedule(reminderCron, async () => {
+  try {
+    const reminders = await getDueReminders();
+    for (const reminder of reminders) {
+      const eventTime = new Date(reminder.occurred_at).toLocaleString();
+      await bot.telegram.sendMessage(
+        reminder.chat_id,
+        `Reminder: ${reminder.summary}\nEvent time: ${eventTime}`,
+        Markup.inlineKeyboard([
+          [Markup.button.callback("Show original", `source:${reminder.chat_id}:${reminder.message_id}`)],
+          [Markup.button.callback("Mark done", `reminder-done:${reminder.id}`)],
+        ]),
+      );
+      await markReminderNotified(reminder.id);
+    }
+  } catch (error) {
+    console.error("Active reminder check failed:", error);
+  }
+});
+console.log(`Active reminder check scheduled with ${reminderCron}.`);
 
 bot.launch().then(() => console.log("Bot is ready in selected test chats only."));
 

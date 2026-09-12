@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { timingSafeEqual } from "node:crypto";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import pg from "pg";
-import { SourceMessageSchema } from "@remember-me/shared";
+import { MemoryExtractionSchema, SourceMessageSchema } from "@remember-me/shared";
 import { answerMemoryQuestion } from "./agent.js";
 import { extractMemory, extractionIsConfigured, inferEventDate } from "./extractor.js";
 
@@ -31,13 +31,16 @@ await pool.query(`
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )
 `);
-// Older local databases predate this column, so upgrade before any query reads it.
+// Upgrade existing local databases before any query reads these fields.
+await pool.query("CREATE EXTENSION IF NOT EXISTS pg_trgm");
 await pool.query("ALTER TABLE memories ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ");
+await pool.query("ALTER TABLE memories ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'superseded'))");
+await pool.query("ALTER TABLE memories ADD COLUMN IF NOT EXISTS superseded_by UUID REFERENCES memories(id) ON DELETE SET NULL");
 const unresolvedEvents = await pool.query<{ id: string; message_text: string; sent_at: string }>(
   `SELECT m.id, s.message_text, s.sent_at
      FROM memories m
      JOIN source_messages s ON s.id = m.source_message_id
-    WHERE m.deleted_at IS NULL AND m.completed_at IS NULL
+    WHERE m.deleted_at IS NULL AND m.completed_at IS NULL AND m.status = 'active'
       AND m.event_title IS NOT NULL AND m.occurred_at IS NULL`,
 );
 for (const event of unresolvedEvents.rows) {
@@ -67,7 +70,10 @@ await pool.query(`
   SELECT m.id, s.chat_id
     FROM memories m
     JOIN source_messages s ON s.id = m.source_message_id
-   WHERE m.deleted_at IS NULL AND m.completed_at IS NULL AND m.occurred_at IS NOT NULL
+   WHERE m.deleted_at IS NULL
+     AND m.completed_at IS NULL
+     AND m.status = 'active'
+     AND m.occurred_at IS NOT NULL
   ON CONFLICT (memory_id) DO NOTHING
 `);
 
@@ -107,7 +113,9 @@ app.get("/memories", { preHandler: requireAccess }, async () => {
             m.confidence, m.verified, s.chat_id, s.message_id, s.message_text, s.sent_at
        FROM memories m
        JOIN source_messages s ON s.id = m.source_message_id
-      WHERE m.deleted_at IS NULL AND m.completed_at IS NULL
+      WHERE m.deleted_at IS NULL
+        AND m.completed_at IS NULL
+        AND m.status = 'active'
       ORDER BY m.created_at DESC`,
   );
   return { memories: result.rows };
@@ -119,7 +127,9 @@ app.get("/briefing", { preHandler: requireAccess }, async () => {
             s.chat_id, s.message_id
        FROM memories m
        JOIN source_messages s ON s.id = m.source_message_id
-      WHERE m.deleted_at IS NULL AND m.completed_at IS NULL
+      WHERE m.deleted_at IS NULL
+        AND m.completed_at IS NULL
+        AND m.status = 'active'
         AND m.confidence >= 0.70
         AND m.importance IN ('medium', 'high')
         AND (m.occurred_at IS NULL OR m.occurred_at >= now() - INTERVAL '1 day')
@@ -150,7 +160,10 @@ app.get<{ Querystring: { q?: string } }>("/memories/search", { preHandler: requi
             m.confidence, s.chat_id, s.message_id, s.message_text, s.sent_at
        FROM memories m
        JOIN source_messages s ON s.id = m.source_message_id
-      WHERE m.deleted_at IS NULL AND m.completed_at IS NULL AND (${matches.join(" OR ")})
+      WHERE m.deleted_at IS NULL
+        AND m.completed_at IS NULL
+        AND m.status = 'active'
+        AND (${matches.join(" OR ")})
       ORDER BY m.confidence DESC, m.created_at DESC
       LIMIT 3`,
     terms.map((term) => `%${term}%`),
@@ -199,7 +212,9 @@ app.get<{ Querystring: { leadMinutes?: string; repeatMinutes?: string } }>("/rem
        JOIN memories m ON m.id = r.memory_id
        JOIN source_messages s ON s.id = m.source_message_id
       WHERE r.acknowledged_at IS NULL
-        AND m.deleted_at IS NULL AND m.completed_at IS NULL
+        AND m.deleted_at IS NULL
+        AND m.completed_at IS NULL
+        AND m.status = 'active'
         AND m.occurred_at <= now() + ($1::text || ' minutes')::interval
         AND m.occurred_at >= now() - INTERVAL '12 hours'
         AND (r.last_notified_at IS NULL OR r.last_notified_at <= now() - ($2::text || ' minutes')::interval)
@@ -272,6 +287,14 @@ app.post("/ingest/sources", { preHandler: requireAccess }, async (request, reply
     return reply.code(400).send({ error: "Invalid source message", details: parsed.error.flatten() });
   }
 
+  const testMemoryPayload = (request.body as { testMemory?: unknown }).testMemory;
+  const testMemory = process.env.ALLOW_TEST_MEMORY_EXTRACTION === "true" && testMemoryPayload !== undefined
+    ? MemoryExtractionSchema.safeParse(testMemoryPayload)
+    : null;
+  if (testMemory && !testMemory.success) {
+    return reply.code(400).send({ error: "Invalid test memory", details: testMemory.error.flatten() });
+  }
+
   const source = parsed.data;
   const insertResult = await pool.query<{ id: string }>(
     `INSERT INTO source_messages
@@ -293,9 +316,9 @@ app.post("/ingest/sources", { preHandler: requireAccess }, async (request, reply
 
   const sourceId = insertResult.rows[0]?.id;
   let extractionStatus: "created" | "skipped" | "failed" = "skipped";
-  if (sourceId && extractionIsConfigured()) {
+  if (sourceId && (extractionIsConfigured() || testMemory?.success)) {
     try {
-      const memory = await extractMemory(source);
+      const memory = testMemory?.success ? testMemory.data : await extractMemory(source);
       const memoryInsert = await pool.query<{ id: string }>(
         `INSERT INTO memories
           (source_message_id, summary, people, event_title, occurred_at, importance, confidence)
@@ -313,8 +336,41 @@ app.post("/ingest/sources", { preHandler: requireAccess }, async (request, reply
       );
       if (memory.event?.occurredAt && memoryInsert.rows[0]) {
         await pool.query(
-          "INSERT INTO reminders (memory_id, chat_id) VALUES ($1, $2) ON CONFLICT (memory_id) DO NOTHING",
+          `INSERT INTO reminders (memory_id, chat_id)
+           SELECT id, $2 FROM memories WHERE id = $1 AND status = 'active'
+           ON CONFLICT (memory_id) DO NOTHING`,
           [memoryInsert.rows[0].id, source.chatId],
+        );
+      }
+      if (memoryInsert.rows[0]) {
+        await pool.query(
+          `WITH candidate AS (
+             SELECT m.id
+               FROM memories m
+               JOIN source_messages s ON s.id = m.source_message_id
+              WHERE m.id <> $1::uuid
+                AND s.chat_id = $2::text
+                AND m.deleted_at IS NULL
+                AND m.status = 'active'
+                AND EXISTS (
+                  SELECT 1
+                    FROM jsonb_array_elements_text(m.people) AS old_person(name)
+                    JOIN jsonb_array_elements_text($3::jsonb) AS new_person(name)
+                      ON lower(old_person.name) = lower(new_person.name)
+                )
+                AND (
+                  (m.event_title IS NOT NULL AND $4::text IS NOT NULL
+                    AND lower(trim(m.event_title)) = lower(trim($4::text)))
+                  OR similarity(lower(m.summary), lower($5::text)) >= 0.45
+                )
+              ORDER BY m.created_at DESC
+              LIMIT 1
+           )
+           UPDATE memories m
+              SET status = 'superseded', superseded_by = $1::uuid
+             FROM candidate
+            WHERE m.id = candidate.id`,
+          [memoryInsert.rows[0].id, source.chatId, JSON.stringify(memory.people), memory.event?.title ?? null, memory.summary],
         );
       }
       extractionStatus = "created";

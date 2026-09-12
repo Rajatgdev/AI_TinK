@@ -72,6 +72,12 @@ async function main(): Promise<void> {
     if (!chatId || !allowedChatIds.has(chatId)) return;
     if (!message.message.trim()) return;
 
+    const sender = await message.getSender();
+    if (sender && "bot" in sender && sender.bot) {
+      console.log(`Ignored bot message in selected chat ${chatId}.`);
+      return;
+    }
+
     const source = SourceMessageSchema.parse({
       provider: "telegram",
       chatId,

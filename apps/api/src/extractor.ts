@@ -77,6 +77,7 @@ export function resolveSenderReferences(text: string, senderName: string | null)
   const name = senderName?.trim();
   if (!name) return text;
   return text
+    .replace(/\bthe birthday of (?:the )?sender\b/gi, `${name}'s birthday`)
     .replace(/\b(?:the )?sender's\b/gi, `${name}'s`)
     .replace(/\bthe sender\b/gi, name);
 }

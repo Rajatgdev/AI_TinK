@@ -10,6 +10,7 @@
     "build": "npm run build --workspaces --if-present",
     "check": "npm run check --workspaces --if-present",
     "dev:api": "npm run dev --workspace=@remember-me/api",
+    "dev:bot": "npm run dev --workspace=@remember-me/bot",
     "dev:listener": "npm run dev --workspace=@remember-me/listener",
     "list:chats": "npm run list:chats --workspace=@remember-me/listener"
   },

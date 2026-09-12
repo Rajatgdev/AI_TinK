@@ -35,6 +35,47 @@ app.get("/memories", async () => {
   return { memories: result.rows };
 });
 
+app.get<{ Querystring: { q?: string } }>("/memories/search", async (request, reply) => {
+  const query = request.query.q?.trim();
+  if (!query) return reply.code(400).send({ error: "Provide a memory query with ?q=" });
+
+  const ignoredWords = new Set(["what", "did", "say", "about", "the", "a", "an", "is", "was", "to", "for"]);
+  const terms = query
+    .toLowerCase()
+    .match(/[a-z0-9]+/g)
+    ?.filter((term) => term.length > 1 && !ignoredWords.has(term))
+    .slice(0, 6) ?? [];
+  if (terms.length === 0) return { memories: [] };
+
+  const matches = terms.map(
+    (_term, index) =>
+      `(lower(m.summary) LIKE $${index + 1} OR lower(coalesce(m.event_title, '')) LIKE $${index + 1} OR lower(m.people::text) LIKE $${index + 1} OR lower(s.message_text) LIKE $${index + 1})`,
+  );
+  const result = await pool.query(
+    `SELECT m.id, m.summary, m.people, m.event_title, m.occurred_at, m.importance,
+            m.confidence, s.chat_id, s.message_id, s.message_text, s.sent_at
+       FROM memories m
+       JOIN source_messages s ON s.id = m.source_message_id
+      WHERE m.deleted_at IS NULL AND (${matches.join(" OR ")})
+      ORDER BY m.confidence DESC, m.created_at DESC
+      LIMIT 3`,
+    terms.map((term) => `%${term}%`),
+  );
+  return { memories: result.rows };
+});
+
+app.get<{ Params: { chatId: string; messageId: string } }>("/sources/:chatId/:messageId", async (request, reply) => {
+  const result = await pool.query(
+    `SELECT chat_id, message_id, sender_name, message_text, sent_at
+       FROM source_messages
+      WHERE provider = 'telegram' AND chat_id = $1 AND message_id = $2`,
+    [request.params.chatId, request.params.messageId],
+  );
+  const source = result.rows[0];
+  if (!source) return reply.code(404).send({ error: "Source message not found" });
+  return { source };
+});
+
 app.post("/ingest/sources", async (request, reply) => {
   const parsed = SourceMessageSchema.safeParse(request.body);
   if (!parsed.success) {

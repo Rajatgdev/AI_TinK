@@ -36,5 +36,6 @@ like a password and never commit or share it.
 ## Project structure
 
 - `apps/listener` — Telegram user-client listener and selected-chat filtering.
+- `apps/bot` — Telegram bot with source-backed `/ask` answers.
 - `packages/shared` — contracts shared by the listener, API, and bot.
 - `infra` — local Postgres schema for development.

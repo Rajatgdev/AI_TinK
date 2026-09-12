@@ -25,6 +25,10 @@ The first deliverable is automatic, allow-listed text capture:
 The next local service is the source API. Start Postgres with
 `docker compose up -d postgres`, then run `npm run dev:api` in a second terminal.
 
+To enable memory extraction, add an OpenRouter key and a model name to `.env`.
+The API always stores the raw Telegram source first; an unavailable or invalid AI
+response must never erase or block that evidence.
+
 On first run, GramJS asks for the test account phone number and verification
 code. It saves a session string locally in `.telegram.session`; treat that file
 like a password and never commit or share it.

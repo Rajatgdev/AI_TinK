@@ -16,3 +16,18 @@ export const SourceMessageSchema = z.object({
 });
 
 export type SourceMessage = z.infer<typeof SourceMessageSchema>;
+
+export const MemoryExtractionSchema = z.object({
+  summary: z.string().min(1).max(500),
+  people: z.array(z.string().min(1).max(120)).max(20),
+  event: z
+    .object({
+      title: z.string().min(1).max(250),
+      occurredAt: z.string().datetime().nullable(),
+    })
+    .nullable(),
+  importance: z.enum(["low", "medium", "high"]),
+  confidence: z.number().min(0).max(1),
+});
+
+export type MemoryExtraction = z.infer<typeof MemoryExtractionSchema>;

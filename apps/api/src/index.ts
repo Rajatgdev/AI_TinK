@@ -31,6 +31,8 @@ await pool.query(`
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )
 `);
+// Older local databases predate this column, so upgrade before any query reads it.
+await pool.query("ALTER TABLE memories ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ");
 const unresolvedEvents = await pool.query<{ id: string; message_text: string; sent_at: string }>(
   `SELECT m.id, s.message_text, s.sent_at
      FROM memories m
@@ -52,7 +54,6 @@ await pool.query(`
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )
 `);
-await pool.query("ALTER TABLE memories ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ");
 await pool.query(`
   UPDATE memories m
      SET completed_at = r.acknowledged_at

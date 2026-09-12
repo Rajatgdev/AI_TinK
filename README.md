@@ -39,3 +39,7 @@ like a password and never commit or share it.
 - `apps/bot` — Telegram bot with source-backed `/ask` answers.
 - `packages/shared` — contracts shared by the listener, API, and bot.
 - `infra` — local Postgres schema for development.
+
+In the prototype, `/pause`, `/resume`, and the Delete memory button require a
+Telegram user ID listed in `TELEGRAM_CAREGIVER_USER_IDS`. Use the numeric user
+ID shown by your test chat-ID bot; never use a group ID for this setting.

@@ -17,6 +17,13 @@ const pool = new pg.Pool({ connectionString: databaseUrl });
 const app = Fastify({ logger: true });
 
 await app.register(cors, { origin: false });
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS capture_controls (
+    chat_id TEXT PRIMARY KEY,
+    is_paused BOOLEAN NOT NULL DEFAULT FALSE,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )
+`);
 
 app.get("/health", async () => {
   await pool.query("SELECT 1");
@@ -74,6 +81,43 @@ app.get<{ Params: { chatId: string; messageId: string } }>("/sources/:chatId/:me
   const source = result.rows[0];
   if (!source) return reply.code(404).send({ error: "Source message not found" });
   return { source };
+});
+
+app.get<{ Params: { chatId: string } }>("/capture-status/:chatId", async (request) => {
+  const result = await pool.query<{ is_paused: boolean }>(
+    "SELECT is_paused FROM capture_controls WHERE chat_id = $1",
+    [request.params.chatId],
+  );
+  return { paused: result.rows[0]?.is_paused ?? false };
+});
+
+app.post<{ Params: { chatId: string } }>("/controls/:chatId/pause", async (request) => {
+  await pool.query(
+    `INSERT INTO capture_controls (chat_id, is_paused)
+     VALUES ($1, TRUE)
+     ON CONFLICT (chat_id) DO UPDATE SET is_paused = TRUE, updated_at = now()`,
+    [request.params.chatId],
+  );
+  return { paused: true };
+});
+
+app.post<{ Params: { chatId: string } }>("/controls/:chatId/resume", async (request) => {
+  await pool.query(
+    `INSERT INTO capture_controls (chat_id, is_paused)
+     VALUES ($1, FALSE)
+     ON CONFLICT (chat_id) DO UPDATE SET is_paused = FALSE, updated_at = now()`,
+    [request.params.chatId],
+  );
+  return { paused: false };
+});
+
+app.delete<{ Params: { id: string } }>("/memories/:id", async (request, reply) => {
+  const result = await pool.query(
+    "UPDATE memories SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL RETURNING id",
+    [request.params.id],
+  );
+  if (result.rowCount === 0) return reply.code(404).send({ error: "Memory not found" });
+  return { deleted: true, id: request.params.id };
 });
 
 app.post("/ingest/sources", async (request, reply) => {

@@ -16,8 +16,16 @@ const allowedChatIds = new Set(
     .filter(Boolean),
 );
 if (allowedChatIds.size === 0) throw new Error("Set TELEGRAM_BOT_ALLOWED_CHAT_IDS to selected test-chat IDs.");
+const caregiverUserIds = new Set(
+  (process.env.TELEGRAM_CAREGIVER_USER_IDS ?? "")
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean),
+);
+if (caregiverUserIds.size === 0) throw new Error("Set TELEGRAM_CAREGIVER_USER_IDS to one or more caregiver Telegram user IDs.");
 
 type Memory = {
+  id: string;
   summary: string;
   chat_id: string;
   message_id: number;
@@ -31,6 +39,15 @@ type Source = {
 
 function chatIsAllowed(chatId: number): boolean {
   return allowedChatIds.has(String(chatId));
+}
+
+function isCaregiver(userId: number | undefined): boolean {
+  return userId !== undefined && caregiverUserIds.has(String(userId));
+}
+
+async function setCaptureState(chatId: number, state: "pause" | "resume"): Promise<boolean> {
+  const response = await fetch(`${apiBaseUrl}/controls/${chatId}/${state}`, { method: "POST" });
+  return response.ok;
 }
 
 const bot = new Telegraf(token);
@@ -64,9 +81,30 @@ bot.command("ask", async (ctx) => {
   await ctx.reply(
     `I found a message that says: ${memory.summary}`,
     Markup.inlineKeyboard([
-      Markup.button.callback("Show original", `source:${memory.chat_id}:${memory.message_id}`),
+      [Markup.button.callback("Show original", `source:${memory.chat_id}:${memory.message_id}`)],
+      [Markup.button.callback("Delete memory", `delete:${memory.id}`)],
     ]),
   );
+});
+
+bot.command("briefing", async (ctx) => {
+  await ctx.reply("Your manual daily briefing will be added after scheduled reminders. For now, use /ask to recall a saved message.");
+});
+
+bot.command("pause", async (ctx) => {
+  if (!isCaregiver(ctx.from?.id)) {
+    await ctx.reply("Only the configured caregiver can pause capture.");
+    return;
+  }
+  await ctx.reply((await setCaptureState(ctx.chat.id, "pause")) ? "Capture paused for this chat." : "I could not pause capture right now.");
+});
+
+bot.command("resume", async (ctx) => {
+  if (!isCaregiver(ctx.from?.id)) {
+    await ctx.reply("Only the configured caregiver can resume capture.");
+    return;
+  }
+  await ctx.reply((await setCaptureState(ctx.chat.id, "resume")) ? "Capture resumed for this chat." : "I could not resume capture right now.");
 });
 
 bot.action(/^source:([-0-9]+):(\d+)$/, async (ctx) => {
@@ -80,6 +118,17 @@ bot.action(/^source:([-0-9]+):(\d+)$/, async (ctx) => {
   const body = (await response.json()) as { source: Source };
   const sender = body.source.sender_name ? `${body.source.sender_name}: ` : "";
   await ctx.reply(`Original message\n${sender}${body.source.message_text}`);
+});
+
+bot.action(/^delete:([0-9a-f-]{36})$/, async (ctx) => {
+  await ctx.answerCbQuery();
+  if (!isCaregiver(ctx.from?.id)) {
+    await ctx.reply("Only the configured caregiver can delete a memory.");
+    return;
+  }
+  const [, memoryId] = ctx.match;
+  const response = await fetch(`${apiBaseUrl}/memories/${memoryId}`, { method: "DELETE" });
+  await ctx.reply(response.ok ? "Memory deleted. Its original source is retained for audit." : "That memory could not be deleted.");
 });
 
 bot.launch().then(() => console.log("Bot is ready in selected test chats only."));

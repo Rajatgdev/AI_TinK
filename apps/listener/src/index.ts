@@ -50,6 +50,18 @@ async function persistSource(source: unknown): Promise<void> {
   }
 }
 
+async function captureIsPaused(chatId: string): Promise<boolean> {
+  try {
+    const response = await fetch(`${apiBaseUrl}/capture-status/${encodeURIComponent(chatId)}`);
+    if (!response.ok) throw new Error(`status ${response.status}`);
+    return ((await response.json()) as { paused: boolean }).paused;
+  } catch (error) {
+    // A control-state failure must not result in accidental capture.
+    console.error("Unable to verify capture control; message was not stored:", error);
+    return true;
+  }
+}
+
 async function main(): Promise<void> {
   requireConfiguration();
   const session = new StringSession(await readSession());
@@ -75,6 +87,10 @@ async function main(): Promise<void> {
     const sender = await message.getSender();
     if (sender && "bot" in sender && sender.bot) {
       console.log(`Ignored bot message in selected chat ${chatId}.`);
+      return;
+    }
+    if (await captureIsPaused(chatId)) {
+      console.log(`Capture is paused for selected chat ${chatId}.`);
       return;
     }
 

@@ -65,6 +65,17 @@ async function captureIsPaused(chatId: string): Promise<boolean> {
   }
 }
 
+function senderDisplayName(sender: unknown): string | null {
+  if (!sender || typeof sender !== "object") return null;
+  const record = sender as Record<string, unknown>;
+  const name = [record.firstName, record.lastName]
+    .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
+    .join(" ")
+    .trim();
+  if (name) return name;
+  return typeof record.username === "string" && record.username.trim() ? record.username.trim() : null;
+}
+
 async function main(): Promise<void> {
   requireConfiguration();
   const session = new StringSession(await readSession());
@@ -102,7 +113,7 @@ async function main(): Promise<void> {
       chatId,
       messageId: message.id,
       senderId: message.senderId?.toString() ?? null,
-      senderName: null,
+      senderName: senderDisplayName(sender),
       messageText: message.message,
       sentAt: new Date(message.date * 1000).toISOString(),
       capturedAt: new Date().toISOString(),

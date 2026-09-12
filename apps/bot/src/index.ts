@@ -50,8 +50,8 @@ type DueReminder = {
   chat_id: string;
   memory_id: string;
   summary: string;
-  event_title: string;
-  occurred_at: string;
+  event_title: string | null;
+  occurred_at: string | null;
   message_id: number;
 };
 
@@ -227,10 +227,12 @@ cron.schedule(reminderCron, async () => {
   try {
     const reminders = await getDueReminders();
     for (const reminder of reminders) {
-      const eventTime = new Date(reminder.occurred_at).toLocaleString();
+      const reminderText = reminder.occurred_at
+        ? `Reminder: ${reminder.summary}\nEvent time: ${new Date(reminder.occurred_at).toLocaleString()}`
+        : `Memory reminder: ${reminder.summary}\nNo time was specified. I will keep reminding you until you mark it done.`;
       await bot.telegram.sendMessage(
         reminder.chat_id,
-        `Reminder: ${reminder.summary}\nEvent time: ${eventTime}`,
+        reminderText,
         Markup.inlineKeyboard([
           [Markup.button.callback("Show original", `source:${reminder.chat_id}:${reminder.message_id}`)],
           [Markup.button.callback("Mark done", `reminder-done:${reminder.id}`)],

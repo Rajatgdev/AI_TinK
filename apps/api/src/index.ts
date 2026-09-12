@@ -87,7 +87,10 @@ await pool.query(`
    WHERE m.deleted_at IS NULL
      AND m.completed_at IS NULL
      AND m.status = 'active'
-     AND m.occurred_at IS NOT NULL
+     AND (
+       m.occurred_at IS NOT NULL
+       OR (m.importance IN ('medium', 'high') AND m.confidence >= 0.50)
+     )
   ON CONFLICT (memory_id) DO NOTHING
 `);
 
@@ -229,8 +232,14 @@ app.get<{ Querystring: { leadMinutes?: string; repeatMinutes?: string } }>("/rem
         AND m.deleted_at IS NULL
         AND m.completed_at IS NULL
         AND m.status = 'active'
-        AND m.occurred_at <= now() + ($1::text || ' minutes')::interval
-        AND m.occurred_at >= now() - INTERVAL '12 hours'
+        AND (
+          (m.occurred_at IS NOT NULL
+            AND m.occurred_at <= now() + ($1::text || ' minutes')::interval
+            AND m.occurred_at >= now() - INTERVAL '12 hours')
+          OR (m.occurred_at IS NULL
+            AND m.importance IN ('medium', 'high')
+            AND m.confidence >= 0.50)
+        )
         AND (r.last_notified_at IS NULL OR r.last_notified_at <= now() - ($2::text || ' minutes')::interval)
       ORDER BY m.occurred_at ASC
       LIMIT 10`,
@@ -348,7 +357,8 @@ app.post("/ingest/sources", { preHandler: requireAccess }, async (request, reply
           memory.confidence,
         ],
       );
-      if (memory.event?.occurredAt && memoryInsert.rows[0]) {
+      const shouldRepeat = Boolean(memory.event?.occurredAt) || (memory.importance !== "low" && memory.confidence >= 0.5);
+      if (shouldRepeat && memoryInsert.rows[0]) {
         await pool.query(
           `INSERT INTO reminders (memory_id, chat_id)
            SELECT id, $2 FROM memories WHERE id = $1 AND status = 'active'

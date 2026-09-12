@@ -1,0 +1,22 @@
+:root { font-family: Inter, ui-sans-serif, system-ui, sans-serif; color: #18232f; background: #f7f8f7; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+button { font: inherit; cursor: pointer; border-radius: 8px; padding: 10px 14px; border: 1px solid transparent; font-weight: 650; }
+main { width: min(960px, calc(100% - 40px)); margin: 0 auto; padding: 60px 0 80px; }
+header { max-width: 680px; margin-bottom: 34px; }
+h1, h2, h3, p { margin-top: 0; }
+h1 { font-size: clamp(2.1rem, 5vw, 3.5rem); letter-spacing: -0.04em; margin-bottom: 12px; }
+h2 { font-size: 1.35rem; margin-bottom: 0; }
+h3 { margin: 14px 0 11px; font-size: 1.12rem; }
+.eyebrow, .label { color: #19766d; font-size: .78rem; font-weight: 750; letter-spacing: .09em; text-transform: uppercase; margin-bottom: 8px; }
+.intro { color: #52606b; font-size: 1.1rem; line-height: 1.55; }
+.controls { display: flex; gap: 20px; align-items: center; justify-content: space-between; padding: 20px; border: 1px solid #d8e0dc; background: #fff; border-radius: 14px; }
+.chat-id { margin: 0; font-family: ui-monospace, monospace; color: #44515a; }
+.status { border-radius: 999px; padding: 7px 10px; font-weight: 700; font-size: .9rem; }
+.status.active { background: #dff7ed; color: #176744; }.status.paused { background: #fff0d9; color: #8c5812; }
+.primary { background: #116b63; color: white; }.secondary { color: #8b3827; border-color: #e8beb4; background: #fffafa; }
+.notice { color: #6a747b; margin: 18px 2px 38px; }.section-heading { display: flex; justify-content: space-between; align-items: end; margin-bottom: 16px; }
+.text-button { color: #116b63; background: transparent; padding-right: 0; }.memory-list { display: grid; gap: 14px; }.memory { padding: 20px; background: white; border: 1px solid #d8e0dc; border-radius: 14px; }
+.memory-topline { display: flex; gap: 11px; align-items: center; color: #69767e; font-size: .86rem; }.importance { text-transform: capitalize; font-weight: 750; }.importance.high { color: #a23e25; }.importance.medium { color: #9a6214; }.importance.low { color: #3c6971; }
+.event { color: #1c5f57; font-weight: 600; }.source { margin: 10px 0 4px; line-height: 1.5; }.source-meta { color: #69767e; font-size: .82rem; }.delete { color: #9e2c20; background: #fffafa; border-color: #e9c8c3; margin-top: 16px; }.empty { color: #69767e; padding: 24px 0; }
+@media (max-width: 640px) { main { width: min(100% - 28px, 960px); padding-top: 36px; }.controls { align-items: flex-start; flex-direction: column; gap: 12px; } }

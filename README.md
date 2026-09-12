@@ -47,3 +47,10 @@ ID shown by your test chat-ID bot; never use a group ID for this setting.
 Use `/briefing` in the bot to test a concise, source-backed daily briefing.
 Set `DAILY_BRIEFING_CRON` only after manual verification; for example,
 `0 9 * * *` sends at 9:00 AM in `DAILY_BRIEFING_TIMEZONE`.
+
+## Local caregiver dashboard
+
+Set `VITE_SELECTED_CHAT_ID` to the selected test group ID, then run
+`npm run dev:web` and open the displayed localhost URL. This dashboard is a
+local demo interface only; it has no sign-in and must not be deployed before
+Auth0 access control is added.

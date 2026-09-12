@@ -12,6 +12,7 @@
     "dev:api": "npm run dev --workspace=@remember-me/api",
     "dev:bot": "npm run dev --workspace=@remember-me/bot",
     "dev:listener": "npm run dev --workspace=@remember-me/listener",
+    "dev:web": "npm run dev --workspace=@remember-me/web",
     "list:chats": "npm run list:chats --workspace=@remember-me/listener"
   },
   "devDependencies": {

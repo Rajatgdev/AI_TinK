@@ -17,7 +17,7 @@ const port = Number(process.env.PORT ?? 3000);
 const pool = new pg.Pool({ connectionString: databaseUrl });
 const app = Fastify({ logger: true });
 
-await app.register(cors, { origin: false });
+await app.register(cors, { origin: ["http://localhost:5173", "http://127.0.0.1:5173"] });
 await pool.query(`
   CREATE TABLE IF NOT EXISTS capture_controls (
     chat_id TEXT PRIMARY KEY,

@@ -39,6 +39,10 @@ CREATE TABLE memories (
   importance TEXT NOT NULL CHECK (importance IN ('low', 'medium', 'high')),
   confidence NUMERIC(3, 2) NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
   verified BOOLEAN NOT NULL DEFAULT FALSE,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'superseded')),
+  superseded_by UUID REFERENCES memories(id) ON DELETE SET NULL,
   deleted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE EXTENSION IF NOT EXISTS pg_trgm;

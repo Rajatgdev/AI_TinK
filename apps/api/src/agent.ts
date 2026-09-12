@@ -70,7 +70,7 @@ async function searchMemories(pool: pg.Pool, query: string): Promise<SearchResul
     `SELECT m.id, m.summary, s.chat_id, s.message_id, m.importance, m.confidence
        FROM memories m
        JOIN source_messages s ON s.id = m.source_message_id
-      WHERE m.deleted_at IS NULL AND (${matches.join(" OR ")})
+      WHERE m.deleted_at IS NULL AND m.status = 'active' AND (${matches.join(" OR ")})
       ORDER BY m.confidence DESC, m.created_at DESC
       LIMIT 3`,
     terms.map((term) => `%${term}%`),

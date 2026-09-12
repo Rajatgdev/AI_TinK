@@ -13,6 +13,9 @@ The first deliverable is automatic, allow-listed text capture:
 3. See a validated `SourceMessage` printed by the listener.
 4. Confirm that messages from all other chats are ignored.
 
+Messages sent or received by the dedicated test account are captured in its
+selected chats. Telegram bot messages are ignored.
+
 ## Local setup
 
 1. Copy `.env.example` to `.env` and enter credentials for a dedicated test
@@ -59,6 +62,13 @@ For Auth0, configure a Single Page Application and custom API, then add its
 domain, SPA client ID, and API audience to `.env`. Generate a separate
 `INTERNAL_API_TOKEN` for the local listener and bot. Never use an Auth0 client
 secret in this SPA.
+
+The dashboard's **Import previous messages** button imports all accessible text
+history from the selected allow-listed test chat using the saved test-account
+session. It skips Telegram bot and non-text messages, honours a paused chat,
+and deduplicates sources already stored. Start the listener once first so that
+`.telegram.session` exists; no interactive Telegram login is performed by the
+import action.
 
 ### Local authentication bypass
 

@@ -4,14 +4,18 @@ import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { timingSafeEqual } from "node:crypto";
+import fs from "node:fs/promises";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import pg from "pg";
-import { SourceMessageSchema } from "@remember-me/shared";
+import { TelegramClient } from "telegram";
+import { StringSession } from "telegram/sessions/index.js";
+import { SourceMessageSchema, type SourceMessage } from "@remember-me/shared";
 import { answerMemoryQuestion } from "./agent.js";
 import { extractMemory, extractionIsConfigured } from "./extractor.js";
 
 dotenv.config({ path: resolve(dirname(fileURLToPath(import.meta.url)), "../../../.env") });
 
+const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error("Set DATABASE_URL in .env before starting the API.");
 
@@ -20,6 +24,15 @@ const auth0Domain = process.env.AUTH0_DOMAIN;
 const auth0Audience = process.env.AUTH0_AUDIENCE;
 const internalApiToken = process.env.INTERNAL_API_TOKEN;
 const localDevelopmentBypass = process.env.NODE_ENV === "development" && process.env.DEV_BYPASS_AUTH === "true";
+const telegramApiId = Number(process.env.TELEGRAM_API_ID);
+const telegramApiHash = process.env.TELEGRAM_API_HASH;
+const telegramSessionFile = resolve(projectRoot, process.env.TELEGRAM_SESSION_FILE ?? "apps/listener/.telegram.session");
+const allowedTelegramChatIds = new Set(
+  (process.env.TELEGRAM_ALLOWED_CHAT_IDS ?? "")
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean),
+);
 const auth0Jwks = auth0Domain ? createRemoteJWKSet(new URL(`https://${auth0Domain}/.well-known/jwks.json`)) : null;
 const pool = new pg.Pool({ connectionString: databaseUrl });
 const app = Fastify({ logger: true });
@@ -37,6 +50,115 @@ function tokensMatch(a: string, b: string): boolean {
   const aBuffer = Buffer.from(a);
   const bBuffer = Buffer.from(b);
   return aBuffer.length === bBuffer.length && timingSafeEqual(aBuffer, bBuffer);
+}
+
+type PersistedSource = {
+  status: "stored" | "duplicate";
+  extractionStatus: "created" | "skipped" | "failed";
+};
+
+async function persistSource(source: SourceMessage): Promise<PersistedSource> {
+  const insertResult = await pool.query<{ id: string }>(
+    `INSERT INTO source_messages
+      (provider, chat_id, message_id, sender_id, sender_name, message_text, sent_at, captured_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     ON CONFLICT (provider, chat_id, message_id) DO NOTHING
+     RETURNING id`,
+    [
+      source.provider,
+      source.chatId,
+      source.messageId,
+      source.senderId,
+      source.senderName,
+      source.messageText,
+      source.sentAt,
+      source.capturedAt,
+    ],
+  );
+
+  const sourceId = insertResult.rows[0]?.id;
+  let extractionStatus: PersistedSource["extractionStatus"] = "skipped";
+  if (sourceId && extractionIsConfigured()) {
+    try {
+      const memory = await extractMemory(source);
+      await pool.query(
+        `INSERT INTO memories
+          (source_message_id, summary, people, event_title, occurred_at, importance, confidence)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          sourceId,
+          memory.summary,
+          JSON.stringify(memory.people),
+          memory.event?.title ?? null,
+          memory.event?.occurredAt ?? null,
+          memory.importance,
+          memory.confidence,
+        ],
+      );
+      extractionStatus = "created";
+    } catch (error) {
+      extractionStatus = "failed";
+      app.log.error(error, "Memory extraction failed; source remains stored.");
+    }
+  }
+
+  return { status: sourceId ? "stored" : "duplicate", extractionStatus };
+}
+
+async function importTelegramHistory(chatId: string): Promise<{ scanned: number; stored: number; duplicates: number; skipped: number; memoriesCreated: number }> {
+  if (!allowedTelegramChatIds.has(chatId)) throw new Error("This chat is not in TELEGRAM_ALLOWED_CHAT_IDS.");
+  if (!Number.isInteger(telegramApiId) || telegramApiId <= 0 || !telegramApiHash) {
+    throw new Error("Telegram client credentials are not configured.");
+  }
+
+  const control = await pool.query<{ is_paused: boolean }>("SELECT is_paused FROM capture_controls WHERE chat_id = $1", [chatId]);
+  if (control.rows[0]?.is_paused) throw new Error("Capture is paused for this chat.");
+
+  let savedSession: string;
+  try {
+    savedSession = (await fs.readFile(telegramSessionFile, "utf8")).trim();
+  } catch {
+    throw new Error("No saved Telegram session was found. Start the listener and authorize the test account first.");
+  }
+  if (!savedSession) throw new Error("The saved Telegram session is empty. Start the listener and authorize the test account first.");
+
+  const client = new TelegramClient(new StringSession(savedSession), telegramApiId, telegramApiHash, { connectionRetries: 3 });
+  const result = { scanned: 0, stored: 0, duplicates: 0, skipped: 0, memoriesCreated: 0 };
+  try {
+    await client.connect();
+    await client.getMe();
+    for await (const message of client.iterMessages(chatId)) {
+      result.scanned += 1;
+      const messageText = message.message?.trim();
+      if (!messageText) {
+        result.skipped += 1;
+        continue;
+      }
+      const sender = await message.getSender();
+      if (sender && "bot" in sender && sender.bot) {
+        result.skipped += 1;
+        continue;
+      }
+
+      const source = SourceMessageSchema.parse({
+        provider: "telegram",
+        chatId,
+        messageId: message.id,
+        senderId: message.senderId?.toString() ?? null,
+        senderName: null,
+        messageText,
+        sentAt: new Date(message.date * 1000).toISOString(),
+        capturedAt: new Date().toISOString(),
+      });
+      const persisted = await persistSource(source);
+      if (persisted.status === "stored") result.stored += 1;
+      else result.duplicates += 1;
+      if (persisted.extractionStatus === "created") result.memoriesCreated += 1;
+    }
+  } finally {
+    await client.disconnect();
+  }
+  return result;
 }
 
 async function requireAccess(request: FastifyRequest, reply: FastifyReply): Promise<void> {
@@ -183,61 +305,26 @@ app.delete<{ Params: { id: string } }>("/memories/:id", { preHandler: requireAcc
   return { deleted: true, id: request.params.id };
 });
 
+app.post<{ Params: { chatId: string } }>("/imports/telegram/:chatId/history", { preHandler: requireAccess }, async (request, reply) => {
+  try {
+    return await importTelegramHistory(request.params.chatId);
+  } catch (error) {
+    request.log.error(error, "Telegram history import failed");
+    return reply.code(400).send({ error: error instanceof Error ? error.message : "Telegram history import failed." });
+  }
+});
+
 app.post("/ingest/sources", { preHandler: requireAccess }, async (request, reply) => {
   const parsed = SourceMessageSchema.safeParse(request.body);
   if (!parsed.success) {
     return reply.code(400).send({ error: "Invalid source message", details: parsed.error.flatten() });
   }
 
-  const source = parsed.data;
-  const insertResult = await pool.query<{ id: string }>(
-    `INSERT INTO source_messages
-      (provider, chat_id, message_id, sender_id, sender_name, message_text, sent_at, captured_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-     ON CONFLICT (provider, chat_id, message_id) DO NOTHING
-     RETURNING id`,
-    [
-      source.provider,
-      source.chatId,
-      source.messageId,
-      source.senderId,
-      source.senderName,
-      source.messageText,
-      source.sentAt,
-      source.capturedAt,
-    ],
-  );
-
-  const sourceId = insertResult.rows[0]?.id;
-  let extractionStatus: "created" | "skipped" | "failed" = "skipped";
-  if (sourceId && extractionIsConfigured()) {
-    try {
-      const memory = await extractMemory(source);
-      await pool.query(
-        `INSERT INTO memories
-          (source_message_id, summary, people, event_title, occurred_at, importance, confidence)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [
-          sourceId,
-          memory.summary,
-          JSON.stringify(memory.people),
-          memory.event?.title ?? null,
-          memory.event?.occurredAt ?? null,
-          memory.importance,
-          memory.confidence,
-        ],
-      );
-      extractionStatus = "created";
-    } catch (error) {
-      extractionStatus = "failed";
-      request.log.error(error, "Memory extraction failed; source remains stored.");
-    }
-  }
+  const persisted = await persistSource(parsed.data);
 
   return reply.code(201).send({
-    status: sourceId ? "stored" : "duplicate",
-    extractionStatus,
-    source: { chatId: source.chatId, messageId: source.messageId },
+    ...persisted,
+    source: { chatId: parsed.data.chatId, messageId: parsed.data.messageId },
   });
 });
 

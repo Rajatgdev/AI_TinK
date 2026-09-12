@@ -7,12 +7,14 @@ import { NewMessage } from "telegram/events/index.js";
 import { TelegramClient } from "telegram";
 import { StringSession } from "telegram/sessions/index.js";
 import { SourceMessageSchema } from "@remember-me/shared";
+import { closePrompt, readLine } from "./prompt.js";
 
 dotenv.config({ path: resolve(dirname(fileURLToPath(import.meta.url)), "../../../.env") });
 
+const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const apiId = Number(process.env.TELEGRAM_API_ID);
 const apiHash = process.env.TELEGRAM_API_HASH;
-const sessionFile = process.env.TELEGRAM_SESSION_FILE ?? ".telegram.session";
+const sessionFile = resolve(projectRoot, process.env.TELEGRAM_SESSION_FILE ?? "apps/listener/.telegram.session");
 const apiBaseUrl = process.env.API_BASE_URL ?? "http://localhost:3000";
 const internalApiToken = process.env.INTERNAL_API_TOKEN;
 const allowedChatIds = new Set(
@@ -72,12 +74,16 @@ async function main(): Promise<void> {
     connectionRetries: 5,
   });
 
-  await client.start({
-    phoneNumber: () => input.text("Test-account phone number: "),
-    password: () => input.text("Two-factor password (if enabled): ", { hideEchoBack: true }),
-    phoneCode: () => input.text("Telegram verification code: "),
-    onError: (error) => console.error("Telegram login error:", error),
-  });
+  try {
+    await client.start({
+      phoneNumber: () => readLine("Test-account phone number: "),
+      password: () => input.text("Two-factor password (if enabled): ", { hideEchoBack: true }),
+      phoneCode: () => readLine("Telegram verification code: "),
+      onError: (error) => console.error("Telegram login error:", error),
+    });
+  } finally {
+    closePrompt();
+  }
   await fs.writeFile(sessionFile, session.save(), { mode: 0o600 });
 
   console.log(`Listener ready. Monitoring ${allowedChatIds.size} selected test chat(s) only.`);
@@ -115,7 +121,7 @@ async function main(): Promise<void> {
       // Never silently claim capture succeeded if the source is not durable.
       console.error("Source was not saved:", error);
     }
-  }, new NewMessage({ incoming: true }));
+  }, new NewMessage({}));
 }
 
 main().catch((error: unknown) => {

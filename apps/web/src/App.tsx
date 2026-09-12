@@ -31,6 +31,7 @@ export function CaregiverDashboard({ auth }: { auth: DashboardAuth }) {
   const { isAuthenticated, isLoading, user, signIn, signOut, getAccessToken } = auth;
   const [memories, setMemories] = useState<Memory[]>([]);
   const [paused, setPaused] = useState(false);
+  const [historyImporting, setHistoryImporting] = useState(false);
   const [message, setMessage] = useState("Loading local demo data…");
 
   const authenticatedFetch = useCallback(async (input: string, init: RequestInit = {}) => {
@@ -84,6 +85,26 @@ export function CaregiverDashboard({ auth }: { auth: DashboardAuth }) {
     setMessage("Memory deleted. The original source remains retained.");
   }
 
+  async function importHistory() {
+    if (!selectedChatId) {
+      setMessage("Set VITE_SELECTED_CHAT_ID in the root .env file first.");
+      return;
+    }
+    if (!window.confirm("Import all accessible prior text messages from this selected test chat? Existing messages will not be duplicated. Telegram bot messages will be skipped.")) return;
+    setHistoryImporting(true);
+    try {
+      const response = await authenticatedFetch(`${api}/imports/telegram/${encodeURIComponent(selectedChatId)}/history`, { method: "POST" });
+      const body = (await response.json()) as { error?: string; scanned?: number; stored?: number; duplicates?: number; skipped?: number; memoriesCreated?: number };
+      if (!response.ok) throw new Error(body.error ?? "The history import could not be completed.");
+      await load();
+      setMessage(`History import complete: ${body.stored} saved, ${body.duplicates} already present, ${body.skipped} skipped, ${body.memoriesCreated} memories created.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "The history import could not be completed.");
+    } finally {
+      setHistoryImporting(false);
+    }
+  }
+
   if (isLoading) return <main><p>Loading secure dashboard…</p></main>;
   if (!isAuthenticated) return <main className="login"><p className="eyebrow">Remember Me</p><h1>Caregiver dashboard</h1><p>Sign in to review and control the selected memory companion.</p><button className="primary" onClick={() => void signIn?.()}>Sign in as caregiver</button></main>;
 
@@ -104,6 +125,9 @@ export function CaregiverDashboard({ auth }: { auth: DashboardAuth }) {
         <div className={`status ${paused ? "paused" : "active"}`}>{paused ? "Capture paused" : "Capture active"}</div>
         <button className={paused ? "primary" : "secondary"} onClick={() => void setCaptureState(paused ? "resume" : "pause")}>
           {paused ? "Resume capture" : "Pause capture"}
+        </button>
+        <button className="secondary" disabled={historyImporting || paused} onClick={() => void importHistory()}>
+          {historyImporting ? "Importing history…" : "Import previous messages"}
         </button>
       </section>
 

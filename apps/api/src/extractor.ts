@@ -38,11 +38,17 @@ function normalizeExtraction(payload: unknown, source: SourceMessage): unknown {
   const fallbackTask = !modelEvent && inferredDate ? inferTimedTask(source.messageText) : null;
   const event = modelEvent ?? (fallbackTask ? { title: fallbackTask, occurredAt: inferredDate } : null);
   const importance = typeof candidate.importance === "string" ? candidate.importance.toLowerCase() : candidate.importance;
+  const confidence =
+    typeof candidate.confidence === "string" && candidate.confidence.trim() !== ""
+      ? Number(candidate.confidence)
+      : candidate.confidence;
 
   return {
     ...candidate,
     // Models occasionally title-case enum values despite explicit instructions.
     importance: event && importance === "low" ? "medium" : importance,
+    // Models occasionally serialize this numeric field as a JSON string.
+    confidence,
     event,
   };
 }

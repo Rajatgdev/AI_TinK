@@ -59,3 +59,18 @@ For Auth0, configure a Single Page Application and custom API, then add its
 domain, SPA client ID, and API audience to `.env`. Generate a separate
 `INTERNAL_API_TOKEN` for the local listener and bot. Never use an Auth0 client
 secret in this SPA.
+
+### Local authentication bypass
+
+For local testing only, add both values to your uncommitted `.env` file, then
+restart `npm run dev:api` and `npm run dev:web`:
+
+```dotenv
+VITE_DEV_BYPASS_AUTH=true
+DEV_BYPASS_AUTH=true
+```
+
+The dashboard flag is ignored by production builds. The API flag only works
+through its development script, which explicitly sets `NODE_ENV=development`;
+the production `start` command never enables it. Never add either value to a
+deployed environment.

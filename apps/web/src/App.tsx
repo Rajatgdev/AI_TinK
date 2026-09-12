@@ -18,16 +18,28 @@ type Memory = {
 const api = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:3000";
 const selectedChatId = import.meta.env.VITE_SELECTED_CHAT_ID as string | undefined;
 
-export default function App() {
-  const { isAuthenticated, isLoading, user, loginWithRedirect, logout, getAccessTokenSilently } = useAuth0();
+type DashboardAuth = {
+  isAuthenticated: boolean;
+  isLoading: boolean;
+  user?: { email?: string | null; name?: string | null };
+  signIn?: () => Promise<void>;
+  signOut?: () => void;
+  getAccessToken?: () => Promise<string>;
+};
+
+export function CaregiverDashboard({ auth }: { auth: DashboardAuth }) {
+  const { isAuthenticated, isLoading, user, signIn, signOut, getAccessToken } = auth;
   const [memories, setMemories] = useState<Memory[]>([]);
   const [paused, setPaused] = useState(false);
   const [message, setMessage] = useState("Loading local demo data…");
 
   const authenticatedFetch = useCallback(async (input: string, init: RequestInit = {}) => {
-    const token = await getAccessTokenSilently();
-    return fetch(input, { ...init, headers: { ...init.headers, authorization: `Bearer ${token}` } });
-  }, [getAccessTokenSilently]);
+    const token = getAccessToken ? await getAccessToken() : undefined;
+    return fetch(input, {
+      ...init,
+      headers: { ...init.headers, ...(token ? { authorization: `Bearer ${token}` } : {}) },
+    });
+  }, [getAccessToken]);
 
   const load = useCallback(async () => {
     if (!isAuthenticated) return;
@@ -73,7 +85,7 @@ export default function App() {
   }
 
   if (isLoading) return <main><p>Loading secure dashboard…</p></main>;
-  if (!isAuthenticated) return <main className="login"><p className="eyebrow">Remember Me</p><h1>Caregiver dashboard</h1><p>Sign in to review and control the selected memory companion.</p><button className="primary" onClick={() => void loginWithRedirect()}>Sign in as caregiver</button></main>;
+  if (!isAuthenticated) return <main className="login"><p className="eyebrow">Remember Me</p><h1>Caregiver dashboard</h1><p>Sign in to review and control the selected memory companion.</p><button className="primary" onClick={() => void signIn?.()}>Sign in as caregiver</button></main>;
 
   return (
     <main>
@@ -81,7 +93,7 @@ export default function App() {
         <p className="eyebrow">Remember Me</p>
         <h1>Caregiver dashboard</h1>
         <p className="intro">Signed in as {user?.email ?? user?.name ?? "caregiver"}. Review what the companion remembered, pause capture, and correct the record through deletion.</p>
-        <button className="text-button" onClick={() => void logout({ logoutParams: { returnTo: window.location.origin } })}>Sign out</button>
+        {signOut && <button className="text-button" onClick={signOut}>Sign out</button>}
       </header>
 
       <section className="controls" aria-label="Capture controls">
@@ -127,5 +139,21 @@ export default function App() {
         )}
       </section>
     </main>
+  );
+}
+
+export default function App() {
+  const { isAuthenticated, isLoading, user, loginWithRedirect, logout, getAccessTokenSilently } = useAuth0();
+  return (
+    <CaregiverDashboard
+      auth={{
+        isAuthenticated,
+        isLoading,
+        user,
+        signIn: loginWithRedirect,
+        signOut: () => logout({ logoutParams: { returnTo: window.location.origin } }),
+        getAccessToken: getAccessTokenSilently,
+      }}
+    />
   );
 }

@@ -19,6 +19,7 @@ const port = Number(process.env.PORT ?? 3000);
 const auth0Domain = process.env.AUTH0_DOMAIN;
 const auth0Audience = process.env.AUTH0_AUDIENCE;
 const internalApiToken = process.env.INTERNAL_API_TOKEN;
+const localDevelopmentBypass = process.env.NODE_ENV === "development" && process.env.DEV_BYPASS_AUTH === "true";
 const auth0Jwks = auth0Domain ? createRemoteJWKSet(new URL(`https://${auth0Domain}/.well-known/jwks.json`)) : null;
 const pool = new pg.Pool({ connectionString: databaseUrl });
 const app = Fastify({ logger: true });
@@ -39,6 +40,9 @@ function tokensMatch(a: string, b: string): boolean {
 }
 
 async function requireAccess(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  // This can only be enabled by the development script and must never be used
+  // by the production start command.
+  if (localDevelopmentBypass) return;
   const header = request.headers.authorization;
   const token = header?.startsWith("Bearer ") ? header.slice(7) : undefined;
   if (!token) {

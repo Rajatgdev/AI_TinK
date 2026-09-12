@@ -57,6 +57,31 @@ type PersistedSource = {
   extractionStatus: "created" | "skipped" | "failed";
 };
 
+async function createDerivedMemory(sourceId: string, source: SourceMessage): Promise<"created" | "skipped" | "failed"> {
+  if (!extractionIsConfigured()) return "skipped";
+  try {
+    const memory = await extractMemory(source);
+    await pool.query(
+      `INSERT INTO memories
+        (source_message_id, summary, people, event_title, occurred_at, importance, confidence)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [
+        sourceId,
+        memory.summary,
+        JSON.stringify(memory.people),
+        memory.event?.title ?? null,
+        memory.event?.occurredAt ?? null,
+        memory.importance,
+        memory.confidence,
+      ],
+    );
+    return "created";
+  } catch (error) {
+    app.log.error(error, "Memory extraction failed; source remains stored.");
+    return "failed";
+  }
+}
+
 async function persistSource(source: SourceMessage): Promise<PersistedSource> {
   const insertResult = await pool.query<{ id: string }>(
     `INSERT INTO source_messages
@@ -77,32 +102,47 @@ async function persistSource(source: SourceMessage): Promise<PersistedSource> {
   );
 
   const sourceId = insertResult.rows[0]?.id;
-  let extractionStatus: PersistedSource["extractionStatus"] = "skipped";
-  if (sourceId && extractionIsConfigured()) {
-    try {
-      const memory = await extractMemory(source);
-      await pool.query(
-        `INSERT INTO memories
-          (source_message_id, summary, people, event_title, occurred_at, importance, confidence)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [
-          sourceId,
-          memory.summary,
-          JSON.stringify(memory.people),
-          memory.event?.title ?? null,
-          memory.event?.occurredAt ?? null,
-          memory.importance,
-          memory.confidence,
-        ],
-      );
-      extractionStatus = "created";
-    } catch (error) {
-      extractionStatus = "failed";
-      app.log.error(error, "Memory extraction failed; source remains stored.");
-    }
-  }
+  const extractionStatus: PersistedSource["extractionStatus"] = sourceId ? await createDerivedMemory(sourceId, source) : "skipped";
 
   return { status: sourceId ? "stored" : "duplicate", extractionStatus };
+}
+
+async function createMissingMemoryCards(): Promise<{ candidates: number; created: number; failed: number; skipped: number }> {
+  const result = await pool.query<{
+    id: string;
+    chat_id: string;
+    message_id: string | number;
+    sender_id: string | null;
+    sender_name: string | null;
+    message_text: string;
+    sent_at: Date;
+    captured_at: Date;
+  }>(
+    `SELECT s.id, s.chat_id, s.message_id, s.sender_id, s.sender_name, s.message_text, s.sent_at, s.captured_at
+       FROM source_messages s
+       LEFT JOIN memories m ON m.source_message_id = s.id
+      WHERE m.id IS NULL
+      ORDER BY s.captured_at ASC
+      LIMIT 100`,
+  );
+  const summary = { candidates: result.rows.length, created: 0, failed: 0, skipped: 0 };
+  for (const row of result.rows) {
+    const source = SourceMessageSchema.parse({
+      provider: "telegram",
+      chatId: row.chat_id,
+      messageId: Number(row.message_id),
+      senderId: row.sender_id,
+      senderName: row.sender_name,
+      messageText: row.message_text,
+      sentAt: row.sent_at.toISOString(),
+      capturedAt: row.captured_at.toISOString(),
+    });
+    const status = await createDerivedMemory(row.id, source);
+    if (status === "created") summary.created += 1;
+    else if (status === "failed") summary.failed += 1;
+    else summary.skipped += 1;
+  }
+  return summary;
 }
 
 async function importTelegramHistory(chatId: string): Promise<{ scanned: number; stored: number; duplicates: number; skipped: number; memoriesCreated: number }> {
@@ -303,6 +343,11 @@ app.delete<{ Params: { id: string } }>("/memories/:id", { preHandler: requireAcc
   );
   if (result.rowCount === 0) return reply.code(404).send({ error: "Memory not found" });
   return { deleted: true, id: request.params.id };
+});
+
+app.post("/memories/create-missing", { preHandler: requireAccess }, async (_request, reply) => {
+  if (!extractionIsConfigured()) return reply.code(503).send({ error: "OpenRouter extraction is not configured." });
+  return createMissingMemoryCards();
 });
 
 app.post<{ Params: { chatId: string } }>("/imports/telegram/:chatId/history", { preHandler: requireAccess }, async (request, reply) => {

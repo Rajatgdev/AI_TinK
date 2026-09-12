@@ -32,6 +32,7 @@ export function CaregiverDashboard({ auth }: { auth: DashboardAuth }) {
   const [memories, setMemories] = useState<Memory[]>([]);
   const [paused, setPaused] = useState(false);
   const [historyImporting, setHistoryImporting] = useState(false);
+  const [creatingMemoryCards, setCreatingMemoryCards] = useState(false);
   const [message, setMessage] = useState("Loading local demo data…");
 
   const authenticatedFetch = useCallback(async (input: string, init: RequestInit = {}) => {
@@ -105,6 +106,21 @@ export function CaregiverDashboard({ auth }: { auth: DashboardAuth }) {
     }
   }
 
+  async function createMemoryCards() {
+    setCreatingMemoryCards(true);
+    try {
+      const response = await authenticatedFetch(`${api}/memories/create-missing`, { method: "POST" });
+      const body = (await response.json()) as { error?: string; candidates?: number; created?: number; failed?: number; skipped?: number };
+      if (!response.ok) throw new Error(body.error ?? "Memory cards could not be created.");
+      await load();
+      setMessage(`Memory-card creation complete: ${body.created} created, ${body.failed} failed, ${body.skipped} skipped.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Memory cards could not be created.");
+    } finally {
+      setCreatingMemoryCards(false);
+    }
+  }
+
   if (isLoading) return <main><p>Loading secure dashboard…</p></main>;
   if (!isAuthenticated) return <main className="login"><p className="eyebrow">Remember Me</p><h1>Caregiver dashboard</h1><p>Sign in to review and control the selected memory companion.</p><button className="primary" onClick={() => void signIn?.()}>Sign in as caregiver</button></main>;
 
@@ -139,6 +155,9 @@ export function CaregiverDashboard({ auth }: { auth: DashboardAuth }) {
             <p className="eyebrow">Evidence backed</p>
             <h2>Saved memories</h2>
           </div>
+          <button className="secondary" disabled={creatingMemoryCards} onClick={() => void createMemoryCards()}>
+            {creatingMemoryCards ? "Creating cards…" : "Create memory cards"}
+          </button>
           <button className="text-button" onClick={() => void load()}>Refresh</button>
         </div>
         {memories.length === 0 ? <p className="empty">No memories have been saved yet.</p> : (

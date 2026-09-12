@@ -19,12 +19,26 @@ function normalizeExtraction(payload: unknown): unknown {
           occurredAt: (candidateEvent as Record<string, unknown>).occurredAt ?? null,
         }
       : null;
+  const rawConfidence = candidate.confidence;
+  const confidence = (() => {
+    if (typeof rawConfidence !== "string") return rawConfidence;
+    const parsed = Number.parseFloat(rawConfidence);
+    if (Number.isFinite(parsed)) {
+      const score = parsed > 1 && parsed <= 100 ? parsed / 100 : parsed;
+      return Math.min(1, Math.max(0, score));
+    }
+    const label = rawConfidence.toLowerCase();
+    if (label.includes("high")) return 0.8;
+    if (label.includes("low")) return 0.2;
+    return 0.5;
+  })();
 
   return {
     ...candidate,
     // Models occasionally title-case enum values despite explicit instructions.
     importance:
       typeof candidate.importance === "string" ? candidate.importance.toLowerCase() : candidate.importance,
+    confidence,
     event,
   };
 }

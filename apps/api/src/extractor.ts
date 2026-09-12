@@ -1,10 +1,16 @@
 import { MemoryExtractionSchema, type MemoryExtraction, type SourceMessage } from "@remember-me/shared";
+import * as chrono from "chrono-node";
 
 export function extractionIsConfigured(): boolean {
   return Boolean(process.env.OPENROUTER_API_KEY && process.env.OPENROUTER_MODEL);
 }
 
-function normalizeExtraction(payload: unknown): unknown {
+export function inferEventDate(messageText: string, sentAt: string): string | null {
+  const parsed = chrono.parseDate(messageText, new Date(sentAt), { forwardDate: true });
+  return parsed ? parsed.toISOString() : null;
+}
+
+function normalizeExtraction(payload: unknown, source: SourceMessage): unknown {
   if (!payload || typeof payload !== "object") return payload;
   const candidate = payload as Record<string, unknown>;
   const candidateEvent = candidate.event;
@@ -16,7 +22,7 @@ function normalizeExtraction(payload: unknown): unknown {
     eventTitle
       ? {
           title: eventTitle,
-          occurredAt: (candidateEvent as Record<string, unknown>).occurredAt ?? null,
+          occurredAt: (candidateEvent as Record<string, unknown>).occurredAt ?? inferEventDate(source.messageText, source.sentAt),
         }
       : null;
 
@@ -66,5 +72,5 @@ export async function extractMemory(source: SourceMessage): Promise<MemoryExtrac
   const payload = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
   const content = payload.choices?.[0]?.message?.content;
   if (!content) throw new Error("OpenRouter returned no extraction content.");
-  return MemoryExtractionSchema.parse(normalizeExtraction(JSON.parse(content)));
+  return MemoryExtractionSchema.parse(normalizeExtraction(JSON.parse(content), source));
 }

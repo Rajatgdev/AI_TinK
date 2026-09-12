@@ -8,7 +8,7 @@ import { createRemoteJWKSet, jwtVerify } from "jose";
 import pg from "pg";
 import { SourceMessageSchema } from "@remember-me/shared";
 import { answerMemoryQuestion } from "./agent.js";
-import { extractMemory, extractionIsConfigured } from "./extractor.js";
+import { extractMemory, extractionIsConfigured, inferEventDate } from "./extractor.js";
 
 dotenv.config({ path: resolve(dirname(fileURLToPath(import.meta.url)), "../../../.env") });
 
@@ -31,6 +31,16 @@ await pool.query(`
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )
 `);
+const unresolvedEvents = await pool.query<{ id: string; message_text: string; sent_at: string }>(
+  `SELECT m.id, s.message_text, s.sent_at
+     FROM memories m
+     JOIN source_messages s ON s.id = m.source_message_id
+    WHERE m.deleted_at IS NULL AND m.event_title IS NOT NULL AND m.occurred_at IS NULL`,
+);
+for (const event of unresolvedEvents.rows) {
+  const occurredAt = inferEventDate(event.message_text, event.sent_at);
+  if (occurredAt) await pool.query("UPDATE memories SET occurred_at = $1 WHERE id = $2", [occurredAt, event.id]);
+}
 await pool.query(`
   CREATE TABLE IF NOT EXISTS reminders (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

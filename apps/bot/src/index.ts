@@ -31,6 +31,11 @@ type Memory = {
   message_id: number;
 };
 
+type AgentAnswer = {
+  answer: string;
+  sources: Array<{ memoryId: string; chatId: string; messageId: number }>;
+};
+
 type Source = {
   sender_name: string | null;
   message_text: string;
@@ -66,23 +71,23 @@ bot.command("ask", async (ctx) => {
     return;
   }
 
-  const response = await fetch(`${apiBaseUrl}/memories/search?q=${encodeURIComponent(question)}`);
+  const response = await fetch(`${apiBaseUrl}/agent/answer?q=${encodeURIComponent(question)}`);
   if (!response.ok) {
     await ctx.reply("I could not search saved messages right now.");
     return;
   }
-  const body = (await response.json()) as { memories: Memory[] };
-  const memory = body.memories[0];
-  if (!memory) {
-    await ctx.reply("I do not know based on the saved messages I found.");
+  const body = (await response.json()) as AgentAnswer;
+  const source = body.sources[0];
+  if (!source) {
+    await ctx.reply(body.answer);
     return;
   }
 
   await ctx.reply(
-    `I found a message that says: ${memory.summary}`,
+    body.answer,
     Markup.inlineKeyboard([
-      [Markup.button.callback("Show original", `source:${memory.chat_id}:${memory.message_id}`)],
-      [Markup.button.callback("Delete memory", `delete:${memory.id}`)],
+      [Markup.button.callback("Show original", `source:${source.chatId}:${source.messageId}`)],
+      [Markup.button.callback("Delete memory", `delete:${source.memoryId}`)],
     ]),
   );
 });

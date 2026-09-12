@@ -5,6 +5,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
 import { SourceMessageSchema } from "@remember-me/shared";
+import { answerMemoryQuestion } from "./agent.js";
 import { extractMemory, extractionIsConfigured } from "./extractor.js";
 
 dotenv.config({ path: resolve(dirname(fileURLToPath(import.meta.url)), "../../../.env") });
@@ -69,6 +70,17 @@ app.get<{ Querystring: { q?: string } }>("/memories/search", async (request, rep
     terms.map((term) => `%${term}%`),
   );
   return { memories: result.rows };
+});
+
+app.get<{ Querystring: { q?: string } }>("/agent/answer", async (request, reply) => {
+  const question = request.query.q?.trim();
+  if (!question) return reply.code(400).send({ error: "Provide a question with ?q=" });
+  try {
+    return await answerMemoryQuestion(pool, question);
+  } catch (error) {
+    request.log.error(error, "Memory agent failed");
+    return reply.code(502).send({ error: "Memory agent could not answer right now." });
+  }
 });
 
 app.get<{ Params: { chatId: string; messageId: string } }>("/sources/:chatId/:messageId", async (request, reply) => {

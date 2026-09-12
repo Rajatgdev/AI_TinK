@@ -1,6 +1,7 @@
 import dotenv from "dotenv";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import cron from "node-cron";
 import { Markup, Telegraf } from "telegraf";
 
 dotenv.config({ path: resolve(dirname(fileURLToPath(import.meta.url)), "../../../.env") });
@@ -36,6 +37,13 @@ type AgentAnswer = {
   sources: Array<{ memoryId: string; chatId: string; messageId: number }>;
 };
 
+type BriefingMemory = {
+  id: string;
+  summary: string;
+  chat_id: string;
+  message_id: number;
+};
+
 type Source = {
   sender_name: string | null;
   message_text: string;
@@ -53,6 +61,23 @@ function isCaregiver(userId: number | undefined): boolean {
 async function setCaptureState(chatId: number, state: "pause" | "resume"): Promise<boolean> {
   const response = await fetch(`${apiBaseUrl}/controls/${chatId}/${state}`, { method: "POST" });
   return response.ok;
+}
+
+async function getBriefing(): Promise<BriefingMemory[]> {
+  const response = await fetch(`${apiBaseUrl}/briefing`);
+  if (!response.ok) throw new Error("Briefing API request failed.");
+  return ((await response.json()) as { memories: BriefingMemory[] }).memories;
+}
+
+function briefingText(memories: BriefingMemory[]): string {
+  if (memories.length === 0) return "Good morning. I do not have any high-confidence memories to highlight today.";
+  return `Good morning. Here are the memories I found for today:\n${memories.map((memory) => `• ${memory.summary}`).join("\n")}`;
+}
+
+function briefingKeyboard(memories: BriefingMemory) {
+  return Markup.inlineKeyboard([
+    Markup.button.callback("Show original", `source:${memories.chat_id}:${memories.message_id}`),
+  ]);
 }
 
 const bot = new Telegraf(token);
@@ -93,7 +118,12 @@ bot.command("ask", async (ctx) => {
 });
 
 bot.command("briefing", async (ctx) => {
-  await ctx.reply("Your manual daily briefing will be added after scheduled reminders. For now, use /ask to recall a saved message.");
+  try {
+    const memories = await getBriefing();
+    await ctx.reply(briefingText(memories), memories[0] ? briefingKeyboard(memories[0]) : undefined);
+  } catch {
+    await ctx.reply("I could not prepare a briefing right now.");
+  }
 });
 
 bot.command("pause", async (ctx) => {
@@ -135,6 +165,27 @@ bot.action(/^delete:([0-9a-f-]{36})$/, async (ctx) => {
   const response = await fetch(`${apiBaseUrl}/memories/${memoryId}`, { method: "DELETE" });
   await ctx.reply(response.ok ? "Memory deleted. Its original source is retained for audit." : "That memory could not be deleted.");
 });
+
+const briefingCron = process.env.DAILY_BRIEFING_CRON;
+if (briefingCron) {
+  const timezone = process.env.DAILY_BRIEFING_TIMEZONE ?? "UTC";
+  if (!cron.validate(briefingCron)) throw new Error("DAILY_BRIEFING_CRON is not a valid five-field cron expression.");
+  cron.schedule(
+    briefingCron,
+    async () => {
+      try {
+        const memories = await getBriefing();
+        for (const chatId of allowedChatIds) {
+          await bot.telegram.sendMessage(chatId, briefingText(memories), memories[0] ? briefingKeyboard(memories[0]) : undefined);
+        }
+      } catch (error) {
+        console.error("Scheduled briefing failed:", error);
+      }
+    },
+    { timezone },
+  );
+  console.log(`Daily briefing scheduled with ${briefingCron} in ${timezone}.`);
+}
 
 bot.launch().then(() => console.log("Bot is ready in selected test chats only."));
 

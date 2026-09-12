@@ -43,6 +43,22 @@ app.get("/memories", async () => {
   return { memories: result.rows };
 });
 
+app.get("/briefing", async () => {
+  const result = await pool.query(
+    `SELECT m.id, m.summary, m.event_title, m.occurred_at, m.importance, m.confidence,
+            s.chat_id, s.message_id
+       FROM memories m
+       JOIN source_messages s ON s.id = m.source_message_id
+      WHERE m.deleted_at IS NULL
+        AND m.confidence >= 0.70
+        AND m.importance IN ('medium', 'high')
+        AND (m.occurred_at IS NULL OR m.occurred_at >= now() - INTERVAL '1 day')
+      ORDER BY m.occurred_at ASC NULLS LAST, m.confidence DESC, m.created_at DESC
+      LIMIT 3`,
+  );
+  return { memories: result.rows };
+});
+
 app.get<{ Querystring: { q?: string } }>("/memories/search", async (request, reply) => {
   const query = request.query.q?.trim();
   if (!query) return reply.code(400).send({ error: "Provide a memory query with ?q=" });

@@ -43,3 +43,7 @@ like a password and never commit or share it.
 In the prototype, `/pause`, `/resume`, and the Delete memory button require a
 Telegram user ID listed in `TELEGRAM_CAREGIVER_USER_IDS`. Use the numeric user
 ID shown by your test chat-ID bot; never use a group ID for this setting.
+
+Use `/briefing` in the bot to test a concise, source-backed daily briefing.
+Set `DAILY_BRIEFING_CRON` only after manual verification; for example,
+`0 9 * * *` sends at 9:00 AM in `DAILY_BRIEFING_TIMEZONE`.

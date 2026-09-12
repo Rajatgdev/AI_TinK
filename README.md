@@ -20,6 +20,9 @@ The first deliverable is automatic, allow-listed text capture:
 2. Install dependencies with `npm install`.
 3. Run `npm run dev:listener`.
 
+The next local service is the source API. Start Postgres with
+`docker compose up -d postgres`, then run `npm run dev:api` in a second terminal.
+
 On first run, GramJS asks for the test account phone number and verification
 code. It saves a session string locally in `.telegram.session`; treat that file
 like a password and never commit or share it.
@@ -28,4 +31,4 @@ like a password and never commit or share it.
 
 - `apps/listener` — Telegram user-client listener and selected-chat filtering.
 - `packages/shared` — contracts shared by the listener, API, and bot.
-- `infra` — local development infrastructure, added as the next step.
+- `infra` — local Postgres schema for development.

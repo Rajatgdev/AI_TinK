@@ -9,6 +9,7 @@ import { SourceMessageSchema } from "@remember-me/shared";
 const apiId = Number(process.env.TELEGRAM_API_ID);
 const apiHash = process.env.TELEGRAM_API_HASH;
 const sessionFile = process.env.TELEGRAM_SESSION_FILE ?? ".telegram.session";
+const apiBaseUrl = process.env.API_BASE_URL ?? "http://localhost:3000";
 const allowedChatIds = new Set(
   (process.env.TELEGRAM_ALLOWED_CHAT_IDS ?? "")
     .split(",")
@@ -31,6 +32,17 @@ async function readSession(): Promise<string> {
   } catch (error: unknown) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
     throw error;
+  }
+}
+
+async function persistSource(source: unknown): Promise<void> {
+  const response = await fetch(`${apiBaseUrl}/ingest/sources`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(source),
+  });
+  if (!response.ok) {
+    throw new Error(`Source API rejected the message: ${response.status} ${await response.text()}`);
   }
 }
 
@@ -67,9 +79,13 @@ async function main(): Promise<void> {
       capturedAt: new Date().toISOString(),
     });
 
-    // The API persistence call is added in the next milestone. Log structured
-    // evidence now so allow-list behavior can be verified without storing data.
-    console.log(JSON.stringify(source, null, 2));
+    try {
+      await persistSource(source);
+      console.log(`Saved source ${source.chatId}/${source.messageId}.`);
+    } catch (error) {
+      // Never silently claim capture succeeded if the source is not durable.
+      console.error("Source was not saved:", error);
+    }
   }, new NewMessage({ incoming: true }));
 }
 

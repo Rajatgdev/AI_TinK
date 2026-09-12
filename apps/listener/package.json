@@ -11,6 +11,7 @@
   "dependencies": {
     "@remember-me/shared": "*",
     "dotenv": "^16.4.7",
+    "input": "^1.0.1",
     "telegram": "^2.26.22",
     "tsx": "^4.19.3"
   }

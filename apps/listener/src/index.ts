@@ -1,7 +1,6 @@
 import "dotenv/config";
 import fs from "node:fs/promises";
-import { stdin, stdout } from "node:process";
-import { createInterface } from "node:readline/promises";
+import input from "input";
 import { NewMessage } from "telegram/events/index.js";
 import { TelegramClient } from "telegram";
 import { StringSession } from "telegram/sessions/index.js";
@@ -37,20 +36,17 @@ async function readSession(): Promise<string> {
 
 async function main(): Promise<void> {
   requireConfiguration();
-  const prompts = createInterface({ input: stdin, output: stdout });
   const session = new StringSession(await readSession());
   const client = new TelegramClient(session, apiId, apiHash!, {
     connectionRetries: 5,
   });
 
   await client.start({
-    phoneNumber: () => prompts.question("Test-account phone number: "),
-    // Do not use a shared terminal when entering a two-factor password.
-    password: () => prompts.question("Two-factor password (if enabled): "),
-    phoneCode: () => prompts.question("Telegram verification code: "),
+    phoneNumber: () => input.text("Test-account phone number: "),
+    password: () => input.text("Two-factor password (if enabled): ", { hideEchoBack: true }),
+    phoneCode: () => input.text("Telegram verification code: "),
     onError: (error) => console.error("Telegram login error:", error),
   });
-  prompts.close();
   await fs.writeFile(sessionFile, session.save(), { mode: 0o600 });
 
   console.log(`Listener ready. Monitoring ${allowedChatIds.size} selected test chat(s) only.`);

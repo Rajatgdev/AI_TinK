@@ -21,8 +21,8 @@ The first deliverable is automatic, allow-listed text capture:
 3. Run `npm run dev:listener`.
 
 On first run, GramJS asks for the test account phone number and verification
-code. It saves an encrypted-looking session string locally in `.telegram.session`;
-never commit or share that file.
+code. It saves a session string locally in `.telegram.session`; treat that file
+like a password and never commit or share it.
 
 ## Project structure
 

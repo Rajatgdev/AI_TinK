@@ -5,9 +5,59 @@ export function extractionIsConfigured(): boolean {
   return Boolean(process.env.OPENROUTER_API_KEY && process.env.OPENROUTER_MODEL);
 }
 
+function timeZoneOffsetAt(timestamp: number, timeZone: string): number {
+  const values = new Map(
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    })
+      .formatToParts(new Date(timestamp))
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, Number(part.value)]),
+  );
+  return (
+    Date.UTC(
+      values.get("year")!,
+      values.get("month")! - 1,
+      values.get("day")!,
+      values.get("hour")!,
+      values.get("minute")!,
+      values.get("second")!,
+    ) - timestamp
+  );
+}
+
 export function inferEventDate(messageText: string, sentAt: string): string | null {
-  const parsed = chrono.parseDate(messageText, new Date(sentAt), { forwardDate: true });
-  return parsed ? parsed.toISOString() : null;
+  const parsed = chrono.parse(messageText, new Date(sentAt), { forwardDate: true })[0];
+  if (!parsed) return null;
+
+  const start = parsed.start;
+  const fallbackDate = parsed.date();
+  const localDateTime = Date.UTC(
+    start.get("year") ?? fallbackDate.getUTCFullYear(),
+    (start.get("month") ?? fallbackDate.getUTCMonth() + 1) - 1,
+    start.get("day") ?? fallbackDate.getUTCDate(),
+    start.get("hour") ?? fallbackDate.getUTCHours(),
+    start.get("minute") ?? fallbackDate.getUTCMinutes(),
+    start.get("second") ?? fallbackDate.getUTCSeconds(),
+  );
+  const timeZone = process.env.EVENT_TIMEZONE ?? process.env.DAILY_BRIEFING_TIMEZONE ?? "UTC";
+
+  try {
+    // Convert wall-clock time in the configured household timezone to UTC, including DST.
+    let utcDateTime = localDateTime - timeZoneOffsetAt(localDateTime, timeZone);
+    utcDateTime = localDateTime - timeZoneOffsetAt(utcDateTime, timeZone);
+    return new Date(utcDateTime).toISOString();
+  } catch {
+    // A malformed timezone must not prevent a source-backed memory from being saved.
+    return fallbackDate.toISOString();
+  }
 }
 
 function normalizeConfidence(value: unknown): number {
@@ -40,14 +90,15 @@ function normalizeExtraction(payload: unknown, source: SourceMessage): unknown {
     candidateEvent && typeof candidateEvent === "object" && typeof (candidateEvent as Record<string, unknown>).title === "string"
       ? ((candidateEvent as Record<string, string>).title.trim() || null)
       : null;
+  const inferredDate = inferEventDate(source.messageText, source.sentAt);
   const modelEvent =
     eventTitle
       ? {
           title: eventTitle,
-          occurredAt: (candidateEvent as Record<string, unknown>).occurredAt ?? inferEventDate(source.messageText, source.sentAt),
+          // The source's stated local time is more reliable than an LLM-generated UTC offset.
+          occurredAt: inferredDate ?? (candidateEvent as Record<string, unknown>).occurredAt,
         }
       : null;
-  const inferredDate = inferEventDate(source.messageText, source.sentAt);
   const fallbackTask = !modelEvent && inferredDate ? inferTimedTask(source.messageText) : null;
   const event = modelEvent ?? (fallbackTask ? { title: fallbackTask, occurredAt: inferredDate } : null);
   const importance = typeof candidate.importance === "string" ? candidate.importance.toLowerCase() : candidate.importance;

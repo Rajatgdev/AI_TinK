@@ -36,14 +36,14 @@ await pool.query("CREATE EXTENSION IF NOT EXISTS pg_trgm");
 await pool.query("ALTER TABLE memories ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ");
 await pool.query("ALTER TABLE memories ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'superseded'))");
 await pool.query("ALTER TABLE memories ADD COLUMN IF NOT EXISTS superseded_by UUID REFERENCES memories(id) ON DELETE SET NULL");
-const unresolvedEvents = await pool.query<{ id: string; message_text: string; sent_at: string }>(
+const activeEvents = await pool.query<{ id: string; message_text: string; sent_at: string }>(
   `SELECT m.id, s.message_text, s.sent_at
      FROM memories m
      JOIN source_messages s ON s.id = m.source_message_id
     WHERE m.deleted_at IS NULL AND m.completed_at IS NULL AND m.status = 'active'
-      AND m.event_title IS NOT NULL AND m.occurred_at IS NULL`,
+      AND m.event_title IS NOT NULL`,
 );
-for (const event of unresolvedEvents.rows) {
+for (const event of activeEvents.rows) {
   const occurredAt = inferEventDate(event.message_text, event.sent_at);
   if (occurredAt) await pool.query("UPDATE memories SET occurred_at = $1 WHERE id = $2", [occurredAt, event.id]);
 }

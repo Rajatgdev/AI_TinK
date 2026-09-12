@@ -10,6 +10,15 @@ export function inferEventDate(messageText: string, sentAt: string): string | nu
   return parsed ? parsed.toISOString() : null;
 }
 
+function inferTimedTask(messageText: string): string | null {
+  const match = messageText.match(
+    /(?:please\s+)?(close|lock|turn off|collect|pick up|take|call|remember to)\s+(.+?)(?=\s+(?:by|at|before|on|today|tomorrow)\b|[,.]|$)/i,
+  );
+  if (!match) return null;
+  const action = `${match[1]} ${match[2]}`.replace(/\s+/g, " ").trim();
+  return action.charAt(0).toUpperCase() + action.slice(1);
+}
+
 function normalizeExtraction(payload: unknown, source: SourceMessage): unknown {
   if (!payload || typeof payload !== "object") return payload;
   const candidate = payload as Record<string, unknown>;
@@ -18,19 +27,22 @@ function normalizeExtraction(payload: unknown, source: SourceMessage): unknown {
     candidateEvent && typeof candidateEvent === "object" && typeof (candidateEvent as Record<string, unknown>).title === "string"
       ? ((candidateEvent as Record<string, string>).title.trim() || null)
       : null;
-  const event =
+  const modelEvent =
     eventTitle
       ? {
           title: eventTitle,
           occurredAt: (candidateEvent as Record<string, unknown>).occurredAt ?? inferEventDate(source.messageText, source.sentAt),
         }
       : null;
+  const inferredDate = inferEventDate(source.messageText, source.sentAt);
+  const fallbackTask = !modelEvent && inferredDate ? inferTimedTask(source.messageText) : null;
+  const event = modelEvent ?? (fallbackTask ? { title: fallbackTask, occurredAt: inferredDate } : null);
+  const importance = typeof candidate.importance === "string" ? candidate.importance.toLowerCase() : candidate.importance;
 
   return {
     ...candidate,
     // Models occasionally title-case enum values despite explicit instructions.
-    importance:
-      typeof candidate.importance === "string" ? candidate.importance.toLowerCase() : candidate.importance,
+    importance: event && importance === "low" ? "medium" : importance,
     event,
   };
 }

@@ -18,7 +18,9 @@ The first deliverable is automatic, allow-listed text capture:
 1. Copy `.env.example` to `.env` and enter credentials for a dedicated test
    account and test chats only.
 2. Install dependencies with `npm install`.
-3. Run `npm run dev:listener`.
+3. Run `npm run list:chats` once. Copy only the chosen test group’s numeric ID
+   into `TELEGRAM_ALLOWED_CHAT_IDS`.
+4. Run `npm run dev:listener`.
 
 The next local service is the source API. Start Postgres with
 `docker compose up -d postgres`, then run `npm run dev:api` in a second terminal.

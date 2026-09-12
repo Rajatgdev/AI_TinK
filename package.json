@@ -10,7 +10,8 @@
     "build": "npm run build --workspaces --if-present",
     "check": "npm run check --workspaces --if-present",
     "dev:api": "npm run dev --workspace=@remember-me/api",
-    "dev:listener": "npm run dev --workspace=@remember-me/listener"
+    "dev:listener": "npm run dev --workspace=@remember-me/listener",
+    "list:chats": "npm run list:chats --workspace=@remember-me/listener"
   },
   "devDependencies": {
     "@types/node": "^22.13.10",

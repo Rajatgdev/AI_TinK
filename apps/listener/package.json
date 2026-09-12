@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
+    "list:chats": "tsx src/list-chats.ts",
     "start": "tsx src/index.ts",
     "check": "tsc --noEmit"
   },

@@ -1,10 +1,14 @@
-import "dotenv/config";
+import dotenv from "dotenv";
 import fs from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import input from "input";
 import { NewMessage } from "telegram/events/index.js";
 import { TelegramClient } from "telegram";
 import { StringSession } from "telegram/sessions/index.js";
 import { SourceMessageSchema } from "@remember-me/shared";
+
+dotenv.config({ path: resolve(dirname(fileURLToPath(import.meta.url)), "../../../.env") });
 
 const apiId = Number(process.env.TELEGRAM_API_ID);
 const apiHash = process.env.TELEGRAM_API_HASH;

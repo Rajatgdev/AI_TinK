@@ -14,6 +14,7 @@ const apiId = Number(process.env.TELEGRAM_API_ID);
 const apiHash = process.env.TELEGRAM_API_HASH;
 const sessionFile = process.env.TELEGRAM_SESSION_FILE ?? ".telegram.session";
 const apiBaseUrl = process.env.API_BASE_URL ?? "http://localhost:3000";
+const internalApiToken = process.env.INTERNAL_API_TOKEN;
 const allowedChatIds = new Set(
   (process.env.TELEGRAM_ALLOWED_CHAT_IDS ?? "")
     .split(",")
@@ -42,7 +43,7 @@ async function readSession(): Promise<string> {
 async function persistSource(source: unknown): Promise<void> {
   const response = await fetch(`${apiBaseUrl}/ingest/sources`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...(internalApiToken ? { authorization: `Bearer ${internalApiToken}` } : {}) },
     body: JSON.stringify(source),
   });
   if (!response.ok) {
@@ -52,7 +53,9 @@ async function persistSource(source: unknown): Promise<void> {
 
 async function captureIsPaused(chatId: string): Promise<boolean> {
   try {
-    const response = await fetch(`${apiBaseUrl}/capture-status/${encodeURIComponent(chatId)}`);
+    const response = await fetch(`${apiBaseUrl}/capture-status/${encodeURIComponent(chatId)}`, {
+      headers: internalApiToken ? { authorization: `Bearer ${internalApiToken}` } : {},
+    });
     if (!response.ok) throw new Error(`status ${response.status}`);
     return ((await response.json()) as { paused: boolean }).paused;
   } catch (error) {

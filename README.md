@@ -54,3 +54,8 @@ Set `VITE_SELECTED_CHAT_ID` to the selected test group ID, then run
 `npm run dev:web` and open the displayed localhost URL. This dashboard is a
 local demo interface only; it has no sign-in and must not be deployed before
 Auth0 access control is added.
+
+For Auth0, configure a Single Page Application and custom API, then add its
+domain, SPA client ID, and API audience to `.env`. Generate a separate
+`INTERNAL_API_TOKEN` for the local listener and bot. Never use an Auth0 client
+secret in this SPA.

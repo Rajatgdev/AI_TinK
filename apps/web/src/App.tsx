@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useAuth0 } from "@auth0/auth0-react";
 
 type Memory = {
   id: string;
@@ -18,24 +19,31 @@ const api = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:3000";
 const selectedChatId = import.meta.env.VITE_SELECTED_CHAT_ID as string | undefined;
 
 export default function App() {
+  const { isAuthenticated, isLoading, user, loginWithRedirect, logout, getAccessTokenSilently } = useAuth0();
   const [memories, setMemories] = useState<Memory[]>([]);
   const [paused, setPaused] = useState(false);
   const [message, setMessage] = useState("Loading local demo data…");
 
+  const authenticatedFetch = useCallback(async (input: string, init: RequestInit = {}) => {
+    const token = await getAccessTokenSilently();
+    return fetch(input, { ...init, headers: { ...init.headers, authorization: `Bearer ${token}` } });
+  }, [getAccessTokenSilently]);
+
   const load = useCallback(async () => {
+    if (!isAuthenticated) return;
     try {
-      const memoriesResponse = await fetch(`${api}/memories`);
+      const memoriesResponse = await authenticatedFetch(`${api}/memories`);
       if (!memoriesResponse.ok) throw new Error("Could not load memories.");
       setMemories((await memoriesResponse.json()).memories);
       if (selectedChatId) {
-        const controlResponse = await fetch(`${api}/capture-status/${encodeURIComponent(selectedChatId)}`);
+        const controlResponse = await authenticatedFetch(`${api}/capture-status/${encodeURIComponent(selectedChatId)}`);
         if (controlResponse.ok) setPaused((await controlResponse.json()).paused);
       }
       setMessage("Local demo only. Sign-in is required before deployment.");
     } catch {
       setMessage("Cannot reach the local API. Start it with npm run dev:api.");
     }
-  }, []);
+  }, [authenticatedFetch, isAuthenticated]);
 
   useEffect(() => void load(), [load]);
 
@@ -44,7 +52,7 @@ export default function App() {
       setMessage("Set VITE_SELECTED_CHAT_ID in the root .env file first.");
       return;
     }
-    const response = await fetch(`${api}/controls/${encodeURIComponent(selectedChatId)}/${next}`, { method: "POST" });
+    const response = await authenticatedFetch(`${api}/controls/${encodeURIComponent(selectedChatId)}/${next}`, { method: "POST" });
     if (!response.ok) {
       setMessage("The capture control could not be updated.");
       return;
@@ -55,7 +63,7 @@ export default function App() {
 
   async function deleteMemory(id: string) {
     if (!window.confirm("Delete this derived memory? The source message remains available for the prototype audit trail.")) return;
-    const response = await fetch(`${api}/memories/${id}`, { method: "DELETE" });
+    const response = await authenticatedFetch(`${api}/memories/${id}`, { method: "DELETE" });
     if (!response.ok) {
       setMessage("That memory could not be deleted.");
       return;
@@ -64,12 +72,16 @@ export default function App() {
     setMessage("Memory deleted. The original source remains retained.");
   }
 
+  if (isLoading) return <main><p>Loading secure dashboard…</p></main>;
+  if (!isAuthenticated) return <main className="login"><p className="eyebrow">Remember Me</p><h1>Caregiver dashboard</h1><p>Sign in to review and control the selected memory companion.</p><button className="primary" onClick={() => void loginWithRedirect()}>Sign in as caregiver</button></main>;
+
   return (
     <main>
       <header>
         <p className="eyebrow">Remember Me</p>
         <h1>Caregiver dashboard</h1>
-        <p className="intro">Review what the companion remembered, pause capture, and correct the record through deletion.</p>
+        <p className="intro">Signed in as {user?.email ?? user?.name ?? "caregiver"}. Review what the companion remembered, pause capture, and correct the record through deletion.</p>
+        <button className="text-button" onClick={() => void logout({ logoutParams: { returnTo: window.location.origin } })}>Sign out</button>
       </header>
 
       <section className="controls" aria-label="Capture controls">

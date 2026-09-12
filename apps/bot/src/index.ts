@@ -10,6 +10,7 @@ const token = process.env.TELEGRAM_BOT_TOKEN;
 if (!token) throw new Error("Set TELEGRAM_BOT_TOKEN in .env before starting the bot.");
 
 const apiBaseUrl = process.env.API_BASE_URL ?? "http://localhost:3000";
+const internalApiToken = process.env.INTERNAL_API_TOKEN;
 const allowedChatIds = new Set(
   (process.env.TELEGRAM_BOT_ALLOWED_CHAT_IDS ?? "")
     .split(",")
@@ -59,12 +60,12 @@ function isCaregiver(userId: number | undefined): boolean {
 }
 
 async function setCaptureState(chatId: number, state: "pause" | "resume"): Promise<boolean> {
-  const response = await fetch(`${apiBaseUrl}/controls/${chatId}/${state}`, { method: "POST" });
+  const response = await fetch(`${apiBaseUrl}/controls/${chatId}/${state}`, { method: "POST", headers: internalApiToken ? { authorization: `Bearer ${internalApiToken}` } : {} });
   return response.ok;
 }
 
 async function getBriefing(): Promise<BriefingMemory[]> {
-  const response = await fetch(`${apiBaseUrl}/briefing`);
+  const response = await fetch(`${apiBaseUrl}/briefing`, { headers: internalApiToken ? { authorization: `Bearer ${internalApiToken}` } : {} });
   if (!response.ok) throw new Error("Briefing API request failed.");
   return ((await response.json()) as { memories: BriefingMemory[] }).memories;
 }
@@ -96,7 +97,7 @@ bot.command("ask", async (ctx) => {
     return;
   }
 
-  const response = await fetch(`${apiBaseUrl}/agent/answer?q=${encodeURIComponent(question)}`);
+  const response = await fetch(`${apiBaseUrl}/agent/answer?q=${encodeURIComponent(question)}`, { headers: internalApiToken ? { authorization: `Bearer ${internalApiToken}` } : {} });
   if (!response.ok) {
     await ctx.reply("I could not search saved messages right now.");
     return;
@@ -144,7 +145,7 @@ bot.command("resume", async (ctx) => {
 
 bot.action(/^source:([-0-9]+):(\d+)$/, async (ctx) => {
   const [, chatId, messageId] = ctx.match;
-  const response = await fetch(`${apiBaseUrl}/sources/${encodeURIComponent(chatId)}/${messageId}`);
+  const response = await fetch(`${apiBaseUrl}/sources/${encodeURIComponent(chatId)}/${messageId}`, { headers: internalApiToken ? { authorization: `Bearer ${internalApiToken}` } : {} });
   await ctx.answerCbQuery();
   if (!response.ok) {
     await ctx.reply("That original message is no longer available.");
@@ -162,7 +163,7 @@ bot.action(/^delete:([0-9a-f-]{36})$/, async (ctx) => {
     return;
   }
   const [, memoryId] = ctx.match;
-  const response = await fetch(`${apiBaseUrl}/memories/${memoryId}`, { method: "DELETE" });
+  const response = await fetch(`${apiBaseUrl}/memories/${memoryId}`, { method: "DELETE", headers: internalApiToken ? { authorization: `Bearer ${internalApiToken}` } : {} });
   await ctx.reply(response.ok ? "Memory deleted. Its original source is retained for audit." : "That memory could not be deleted.");
 });
 

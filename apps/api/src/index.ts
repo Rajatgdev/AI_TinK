@@ -1,8 +1,10 @@
 import dotenv from "dotenv";
 import cors from "@fastify/cors";
-import Fastify from "fastify";
+import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { timingSafeEqual } from "node:crypto";
+import { createRemoteJWKSet, jwtVerify } from "jose";
 import pg from "pg";
 import { SourceMessageSchema } from "@remember-me/shared";
 import { answerMemoryQuestion } from "./agent.js";
@@ -14,6 +16,10 @@ const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error("Set DATABASE_URL in .env before starting the API.");
 
 const port = Number(process.env.PORT ?? 3000);
+const auth0Domain = process.env.AUTH0_DOMAIN;
+const auth0Audience = process.env.AUTH0_AUDIENCE;
+const internalApiToken = process.env.INTERNAL_API_TOKEN;
+const auth0Jwks = auth0Domain ? createRemoteJWKSet(new URL(`https://${auth0Domain}/.well-known/jwks.json`)) : null;
 const pool = new pg.Pool({ connectionString: databaseUrl });
 const app = Fastify({ logger: true });
 
@@ -26,12 +32,37 @@ await pool.query(`
   )
 `);
 
+function tokensMatch(a: string, b: string): boolean {
+  const aBuffer = Buffer.from(a);
+  const bBuffer = Buffer.from(b);
+  return aBuffer.length === bBuffer.length && timingSafeEqual(aBuffer, bBuffer);
+}
+
+async function requireAccess(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const header = request.headers.authorization;
+  const token = header?.startsWith("Bearer ") ? header.slice(7) : undefined;
+  if (!token) {
+    reply.code(401).send({ error: "Authentication is required." });
+    return;
+  }
+  if (internalApiToken && tokensMatch(token, internalApiToken)) return;
+  if (!auth0Domain || !auth0Audience || !auth0Jwks) {
+    reply.code(503).send({ error: "Auth0 is not configured." });
+    return;
+  }
+  try {
+    await jwtVerify(token, auth0Jwks, { issuer: `https://${auth0Domain}/`, audience: auth0Audience });
+  } catch {
+    reply.code(401).send({ error: "Invalid access token." });
+  }
+}
+
 app.get("/health", async () => {
   await pool.query("SELECT 1");
   return { status: "ok", extractionConfigured: extractionIsConfigured() };
 });
 
-app.get("/memories", async () => {
+app.get("/memories", { preHandler: requireAccess }, async () => {
   const result = await pool.query(
     `SELECT m.id, m.summary, m.people, m.event_title, m.occurred_at, m.importance,
             m.confidence, m.verified, s.chat_id, s.message_id, s.message_text, s.sent_at
@@ -43,7 +74,7 @@ app.get("/memories", async () => {
   return { memories: result.rows };
 });
 
-app.get("/briefing", async () => {
+app.get("/briefing", { preHandler: requireAccess }, async () => {
   const result = await pool.query(
     `SELECT m.id, m.summary, m.event_title, m.occurred_at, m.importance, m.confidence,
             s.chat_id, s.message_id
@@ -59,7 +90,7 @@ app.get("/briefing", async () => {
   return { memories: result.rows };
 });
 
-app.get<{ Querystring: { q?: string } }>("/memories/search", async (request, reply) => {
+app.get<{ Querystring: { q?: string } }>("/memories/search", { preHandler: requireAccess }, async (request, reply) => {
   const query = request.query.q?.trim();
   if (!query) return reply.code(400).send({ error: "Provide a memory query with ?q=" });
 
@@ -88,7 +119,7 @@ app.get<{ Querystring: { q?: string } }>("/memories/search", async (request, rep
   return { memories: result.rows };
 });
 
-app.get<{ Querystring: { q?: string } }>("/agent/answer", async (request, reply) => {
+app.get<{ Querystring: { q?: string } }>("/agent/answer", { preHandler: requireAccess }, async (request, reply) => {
   const question = request.query.q?.trim();
   if (!question) return reply.code(400).send({ error: "Provide a question with ?q=" });
   try {
@@ -99,7 +130,7 @@ app.get<{ Querystring: { q?: string } }>("/agent/answer", async (request, reply)
   }
 });
 
-app.get<{ Params: { chatId: string; messageId: string } }>("/sources/:chatId/:messageId", async (request, reply) => {
+app.get<{ Params: { chatId: string; messageId: string } }>("/sources/:chatId/:messageId", { preHandler: requireAccess }, async (request, reply) => {
   const result = await pool.query(
     `SELECT chat_id, message_id, sender_name, message_text, sent_at
        FROM source_messages
@@ -111,7 +142,7 @@ app.get<{ Params: { chatId: string; messageId: string } }>("/sources/:chatId/:me
   return { source };
 });
 
-app.get<{ Params: { chatId: string } }>("/capture-status/:chatId", async (request) => {
+app.get<{ Params: { chatId: string } }>("/capture-status/:chatId", { preHandler: requireAccess }, async (request) => {
   const result = await pool.query<{ is_paused: boolean }>(
     "SELECT is_paused FROM capture_controls WHERE chat_id = $1",
     [request.params.chatId],
@@ -119,7 +150,7 @@ app.get<{ Params: { chatId: string } }>("/capture-status/:chatId", async (reques
   return { paused: result.rows[0]?.is_paused ?? false };
 });
 
-app.post<{ Params: { chatId: string } }>("/controls/:chatId/pause", async (request) => {
+app.post<{ Params: { chatId: string } }>("/controls/:chatId/pause", { preHandler: requireAccess }, async (request) => {
   await pool.query(
     `INSERT INTO capture_controls (chat_id, is_paused)
      VALUES ($1, TRUE)
@@ -129,7 +160,7 @@ app.post<{ Params: { chatId: string } }>("/controls/:chatId/pause", async (reque
   return { paused: true };
 });
 
-app.post<{ Params: { chatId: string } }>("/controls/:chatId/resume", async (request) => {
+app.post<{ Params: { chatId: string } }>("/controls/:chatId/resume", { preHandler: requireAccess }, async (request) => {
   await pool.query(
     `INSERT INTO capture_controls (chat_id, is_paused)
      VALUES ($1, FALSE)
@@ -139,7 +170,7 @@ app.post<{ Params: { chatId: string } }>("/controls/:chatId/resume", async (requ
   return { paused: false };
 });
 
-app.delete<{ Params: { id: string } }>("/memories/:id", async (request, reply) => {
+app.delete<{ Params: { id: string } }>("/memories/:id", { preHandler: requireAccess }, async (request, reply) => {
   const result = await pool.query(
     "UPDATE memories SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL RETURNING id",
     [request.params.id],
@@ -148,7 +179,7 @@ app.delete<{ Params: { id: string } }>("/memories/:id", async (request, reply) =
   return { deleted: true, id: request.params.id };
 });
 
-app.post("/ingest/sources", async (request, reply) => {
+app.post("/ingest/sources", { preHandler: requireAccess }, async (request, reply) => {
   const parsed = SourceMessageSchema.safeParse(request.body);
   if (!parsed.success) {
     return reply.code(400).send({ error: "Invalid source message", details: parsed.error.flatten() });

@@ -8,7 +8,7 @@ import { createRemoteJWKSet, jwtVerify } from "jose";
 import pg from "pg";
 import { MemoryExtractionSchema, SourceMessageSchema } from "@remember-me/shared";
 import { answerMemoryQuestion } from "./agent.js";
-import { extractMemory, extractionIsConfigured, inferEventDate } from "./extractor.js";
+import { extractMemory, extractionIsConfigured, inferEventDate, resolveSenderReferences } from "./extractor.js";
 
 dotenv.config({ path: resolve(dirname(fileURLToPath(import.meta.url)), "../../../.env") });
 
@@ -36,6 +36,20 @@ await pool.query("CREATE EXTENSION IF NOT EXISTS pg_trgm");
 await pool.query("ALTER TABLE memories ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ");
 await pool.query("ALTER TABLE memories ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'superseded'))");
 await pool.query("ALTER TABLE memories ADD COLUMN IF NOT EXISTS superseded_by UUID REFERENCES memories(id) ON DELETE SET NULL");
+const genericSenderMemories = await pool.query<{ id: string; summary: string; event_title: string | null; sender_name: string | null }>(
+  `SELECT m.id, m.summary, m.event_title, s.sender_name
+     FROM memories m
+     JOIN source_messages s ON s.id = m.source_message_id
+    WHERE m.deleted_at IS NULL AND m.completed_at IS NULL AND m.status = 'active'
+      AND (m.summary ILIKE '%sender%' OR coalesce(m.event_title, '') ILIKE '%sender%')`,
+);
+for (const memory of genericSenderMemories.rows) {
+  const summary = resolveSenderReferences(memory.summary, memory.sender_name);
+  const eventTitle = memory.event_title ? resolveSenderReferences(memory.event_title, memory.sender_name) : null;
+  if (summary !== memory.summary || eventTitle !== memory.event_title) {
+    await pool.query("UPDATE memories SET summary = $1, event_title = $2 WHERE id = $3", [summary, eventTitle, memory.id]);
+  }
+}
 const activeEvents = await pool.query<{ id: string; message_text: string; sent_at: string }>(
   `SELECT m.id, s.message_text, s.sent_at
      FROM memories m

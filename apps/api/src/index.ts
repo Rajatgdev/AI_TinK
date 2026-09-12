@@ -35,7 +35,8 @@ const unresolvedEvents = await pool.query<{ id: string; message_text: string; se
   `SELECT m.id, s.message_text, s.sent_at
      FROM memories m
      JOIN source_messages s ON s.id = m.source_message_id
-    WHERE m.deleted_at IS NULL AND m.event_title IS NOT NULL AND m.occurred_at IS NULL`,
+    WHERE m.deleted_at IS NULL AND m.completed_at IS NULL
+      AND m.event_title IS NOT NULL AND m.occurred_at IS NULL`,
 );
 for (const event of unresolvedEvents.rows) {
   const occurredAt = inferEventDate(event.message_text, event.sent_at);
@@ -51,12 +52,21 @@ await pool.query(`
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )
 `);
+await pool.query("ALTER TABLE memories ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ");
+await pool.query(`
+  UPDATE memories m
+     SET completed_at = r.acknowledged_at
+    FROM reminders r
+   WHERE r.memory_id = m.id
+     AND r.acknowledged_at IS NOT NULL
+     AND m.completed_at IS NULL
+`);
 await pool.query(`
   INSERT INTO reminders (memory_id, chat_id)
   SELECT m.id, s.chat_id
     FROM memories m
     JOIN source_messages s ON s.id = m.source_message_id
-   WHERE m.deleted_at IS NULL AND m.occurred_at IS NOT NULL
+   WHERE m.deleted_at IS NULL AND m.completed_at IS NULL AND m.occurred_at IS NOT NULL
   ON CONFLICT (memory_id) DO NOTHING
 `);
 
@@ -96,7 +106,7 @@ app.get("/memories", { preHandler: requireAccess }, async () => {
             m.confidence, m.verified, s.chat_id, s.message_id, s.message_text, s.sent_at
        FROM memories m
        JOIN source_messages s ON s.id = m.source_message_id
-      WHERE m.deleted_at IS NULL
+      WHERE m.deleted_at IS NULL AND m.completed_at IS NULL
       ORDER BY m.created_at DESC`,
   );
   return { memories: result.rows };
@@ -108,7 +118,7 @@ app.get("/briefing", { preHandler: requireAccess }, async () => {
             s.chat_id, s.message_id
        FROM memories m
        JOIN source_messages s ON s.id = m.source_message_id
-      WHERE m.deleted_at IS NULL
+      WHERE m.deleted_at IS NULL AND m.completed_at IS NULL
         AND m.confidence >= 0.70
         AND m.importance IN ('medium', 'high')
         AND (m.occurred_at IS NULL OR m.occurred_at >= now() - INTERVAL '1 day')
@@ -139,7 +149,7 @@ app.get<{ Querystring: { q?: string } }>("/memories/search", { preHandler: requi
             m.confidence, s.chat_id, s.message_id, s.message_text, s.sent_at
        FROM memories m
        JOIN source_messages s ON s.id = m.source_message_id
-      WHERE m.deleted_at IS NULL AND (${matches.join(" OR ")})
+      WHERE m.deleted_at IS NULL AND m.completed_at IS NULL AND (${matches.join(" OR ")})
       ORDER BY m.confidence DESC, m.created_at DESC
       LIMIT 3`,
     terms.map((term) => `%${term}%`),
@@ -188,7 +198,7 @@ app.get<{ Querystring: { leadMinutes?: string; repeatMinutes?: string } }>("/rem
        JOIN memories m ON m.id = r.memory_id
        JOIN source_messages s ON s.id = m.source_message_id
       WHERE r.acknowledged_at IS NULL
-        AND m.deleted_at IS NULL
+        AND m.deleted_at IS NULL AND m.completed_at IS NULL
         AND m.occurred_at <= now() + ($1::text || ' minutes')::interval
         AND m.occurred_at >= now() - INTERVAL '12 hours'
         AND (r.last_notified_at IS NULL OR r.last_notified_at <= now() - ($2::text || ' minutes')::interval)
@@ -210,7 +220,16 @@ app.post<{ Params: { id: string } }>("/reminders/:id/notified", { preHandler: re
 
 app.post<{ Params: { id: string } }>("/reminders/:id/acknowledge", { preHandler: requireAccess }, async (request, reply) => {
   const result = await pool.query(
-    "UPDATE reminders SET acknowledged_at = now() WHERE id = $1 AND acknowledged_at IS NULL RETURNING id",
+    `WITH completed_reminder AS (
+       UPDATE reminders
+          SET acknowledged_at = now()
+        WHERE id = $1 AND acknowledged_at IS NULL
+        RETURNING memory_id
+     )
+     UPDATE memories
+        SET completed_at = now()
+      WHERE id IN (SELECT memory_id FROM completed_reminder)
+      RETURNING id`,
     [request.params.id],
   );
   if (result.rowCount === 0) return reply.code(404).send({ error: "Reminder not found or already completed" });

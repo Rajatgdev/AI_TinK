@@ -39,6 +39,7 @@ CREATE TABLE memories (
   importance TEXT NOT NULL CHECK (importance IN ('low', 'medium', 'high')),
   confidence NUMERIC(3, 2) NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
   verified BOOLEAN NOT NULL DEFAULT FALSE,
+  completed_at TIMESTAMPTZ,
   deleted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
